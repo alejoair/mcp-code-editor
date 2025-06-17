@@ -1,0 +1,3 @@
+# MCP Code Editor Dependencies
+fastmcp>=0.1.0
+# No additional dependencies needed for console tools (uses built-in subprocess)

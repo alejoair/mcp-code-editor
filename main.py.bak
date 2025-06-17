@@ -25,7 +25,9 @@ from tools import (apply_diff, create_file, read_file_with_lines, delete_file,
                   setup_code_editor, project_files, ProjectState,
                   setup_code_editor_with_ast, search_definitions, get_file_definitions,
                   update_file_ast_index, has_structural_changes,
-                  index_library, search_library, get_indexed_libraries, get_library_summary)
+                  index_library, search_library, get_indexed_libraries, get_library_summary,
+                  start_console_process, check_console, send_to_console, list_console_processes,
+                  terminate_console_process, cleanup_terminated_processes)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,8 +51,13 @@ mcp = FastMCP(
     • create_file: Create new files with content and backup support
     • read_file_with_lines: Read files with line numbers and range filtering
     • delete_file: Delete files with optional backup creation
+    • start_console_process: Start interactive console processes (npm, python, etc.)
+    • check_console: Get snapshot of console output from running processes
+    • send_to_console: Send input to interactive console processes
+    • list_console_processes: List and manage active console processes
+    • terminate_console_process: Stop running console processes
     
-    Perfect for automated code editing, refactoring, and file management tasks.
+    Perfect for automated code editing, refactoring, file management, and interactive development tasks.
     """
 )
 
@@ -305,6 +312,162 @@ async def get_code_definition(
 def test_new_function():
     """This is a test function added via apply_diff."""
     return "Hello from new function!"
+
+@mcp.tool
+async def index_library_tool(
+    library_name: str,
+    include_private: bool = False,
+    ctx: Context = None
+) -> dict:
+    """
+    Index an external Python library for code analysis.
+    
+    Args:
+        library_name: Name of the library to index (e.g., 'fastmcp', 'pathlib')
+        include_private: Whether to include private members (starting with _)
+        
+    Returns:
+        Dictionary with indexing results and library information
+    """
+    try:
+        await ctx.info(f"Indexing library '{library_name}'...")
+        
+        result = index_library(library_name, include_private)
+        
+        if result.get("success", True):  # Assume success if not explicitly failed
+            await ctx.info(f"Library '{library_name}' indexed successfully: {result.get('total_definitions', 0)} definitions")
+        else:
+            await ctx.error(f"Failed to index library '{library_name}': {result.get('message', 'Unknown error')}")
+        
+        return result
+        
+    except Exception as e:
+        await ctx.error(f"Error indexing library '{library_name}': {str(e)}")
+        return {
+            "success": False,
+            "error": type(e).__name__,
+            "message": str(e),
+            "library_name": library_name
+        }
+
+@mcp.tool
+async def search_library_tool(
+    library_name: str,
+    query: str,
+    definition_type: str = "any",
+    ctx: Context = None
+) -> dict:
+    """
+    Search for definitions within an indexed library.
+    
+    Args:
+        library_name: Name of the library to search in
+        query: Search term (function/class/variable name)
+        definition_type: Filter by type ("class", "function", "variable", "any")
+        
+    Returns:
+        Dictionary with search results
+    """
+    try:
+        # Check if library is indexed
+        indexed_libs = get_indexed_libraries()
+        if library_name not in indexed_libs:
+            return {
+                "success": False,
+                "error": "LibraryNotIndexed",
+                "message": f"Library '{library_name}' not indexed. Run index_library_tool first.",
+                "indexed_libraries": indexed_libs
+            }
+        
+        # Search for definitions
+        matches = search_library(library_name, query, definition_type)
+        
+        if not matches:
+            return {
+                "success": True,
+                "found": False,
+                "message": f"No definitions found for '{query}' in library '{library_name}'",
+                "library_name": library_name,
+                "query": query,
+                "search_criteria": {
+                    "type": definition_type
+                }
+            }
+        
+        # Prepare results (limit to top 10)
+        definitions = matches[:10]
+        
+        result = {
+            "success": True,
+            "found": True,
+            "library_name": library_name,
+            "query": query,
+            "total_matches": len(matches),
+            "definitions": definitions,
+            "search_criteria": {
+                "type": definition_type
+            }
+        }
+        
+        await ctx.info(f"Found {len(definitions)} definitions for '{query}' in '{library_name}'")
+        
+        return result
+        
+    except Exception as e:
+        await ctx.error(f"Error searching library '{library_name}': {str(e)}")
+        return {
+            "success": False,
+            "error": type(e).__name__,
+            "message": str(e),
+            "library_name": library_name,
+            "query": query
+        }
+
+@mcp.tool
+async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
+    """
+    List all currently indexed libraries with summary information.
+    
+    Returns:
+        Dictionary with list of indexed libraries and their summaries
+    """
+    try:
+        indexed_libs = get_indexed_libraries()
+        
+        if not indexed_libs:
+            return {
+                "success": True,
+                "message": "No libraries indexed yet. Use index_library_tool to index libraries.",
+                "indexed_libraries": [],
+                "total_libraries": 0
+            }
+        
+        # Get summary for each library
+        libraries_info = []
+        for lib_name in indexed_libs:
+            summary = get_library_summary(lib_name)
+            if summary:
+                libraries_info.append(summary)
+        
+        result = {
+            "success": True,
+            "message": f"Found {len(indexed_libs)} indexed libraries",
+            "indexed_libraries": indexed_libs,
+            "total_libraries": len(indexed_libs),
+            "libraries_info": libraries_info
+        }
+        
+        await ctx.info(f"Listed {len(indexed_libs)} indexed libraries")
+        
+        return result
+        
+    except Exception as e:
+        await ctx.error(f"Error listing indexed libraries: {str(e)}")
+        return {
+            "success": False,
+            "error": type(e).__name__,
+            "message": str(e)
+        }
 
 if __name__ == "__main__":
     logger.info("Starting MCP Code Editor Server...")
