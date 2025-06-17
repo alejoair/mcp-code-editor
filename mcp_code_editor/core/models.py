@@ -123,13 +123,8 @@ class FileModifier:
     
     def save_file(self, content: str) -> None:
         """Save the modified content back to the file."""
-        # Create backup
-        backup_path = self.file_path.with_suffix(self.file_path.suffix + '.bak')
-        with open(backup_path, 'w', encoding='utf-8') as f:
-            f.write(self.original_content)
-        
-        # Save modified content
+        # Save modified content directly without backup
         with open(self.file_path, 'w', encoding='utf-8') as f:
             f.write(content)
         
-        logger.info(f"File saved: {self.file_path} (backup: {backup_path})")
+        logger.info(f"File saved: {self.file_path}")

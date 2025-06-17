@@ -69,8 +69,7 @@ def apply_diff(path: str, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
             "blocks_applied": len(diff_blocks),
             "original_lines": original_lines,
             "new_lines": new_lines,
-            "lines_changed": new_lines - original_lines,
-            "backup_created": str(modifier.file_path.with_suffix(modifier.file_path.suffix + '.bak'))
+            "lines_changed": new_lines - original_lines
         }
         
     except FileNotFoundError as e:

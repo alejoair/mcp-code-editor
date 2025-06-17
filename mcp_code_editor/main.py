@@ -20,14 +20,14 @@ sys.path.insert(0, str(project_root))
 
 from fastmcp import FastMCP
 
-# Import tool functions  
-from tools import (apply_diff, create_file, read_file_with_lines, delete_file, 
-                  setup_code_editor, project_files, ProjectState,
-                  setup_code_editor_with_ast, search_definitions, get_file_definitions,
-                  update_file_ast_index, has_structural_changes,
-                  index_library, search_library, get_indexed_libraries, get_library_summary,
-                  start_console_process, check_console, send_to_console, list_console_processes,
-                  terminate_console_process, cleanup_terminated_processes)
+
+from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines, delete_file,
+                                       setup_code_editor, project_files, ProjectState,
+                                       setup_code_editor_with_ast, search_definitions, get_file_definitions,
+                                       update_file_ast_index, has_structural_changes,
+                                       index_library, search_library, get_indexed_libraries, get_library_summary,
+                                       start_console_process, check_console, send_to_console, list_console_processes,
+                                       terminate_console_process, cleanup_terminated_processes)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -524,6 +524,8 @@ async def check_console_tool(
     """
     Get a snapshot of console output from an interactive process.
     
+    Note: This function includes a 10-second delay before execution.
+    
     Args:
         process_id: ID of the process to check
         lines: Number of recent lines to retrieve
@@ -535,7 +537,13 @@ async def check_console_tool(
     Returns:
         Dictionary with console snapshot and metadata
     """
+    import asyncio
+    
     try:
+        # Wait 10 seconds before executing
+        await ctx.info(f"Waiting 10 seconds before checking console {process_id}...")
+        await asyncio.sleep(10)
+        
         result = check_console(process_id, lines, include_timestamps, 
                              filter_type, since_timestamp, raw_output)
         
@@ -700,7 +708,8 @@ async def cleanup_terminated_processes_tool(ctx: Context = None) -> dict:
             "message": str(e)
         }
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the MCP Code Editor Server."""
     logger.info("Starting MCP Code Editor Server...")
     
     # Run the server with STDIO transport (default)
@@ -708,3 +717,6 @@ if __name__ == "__main__":
     
     # For HTTP transport, uncomment:
     # mcp.run(transport="streamable-http", host="127.0.0.1", port=9000)
+
+if __name__ == "__main__":
+    main()

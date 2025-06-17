@@ -31,19 +31,7 @@ def create_file(path: str, content: str, overwrite: bool = False) -> Dict[str, A
         # Create parent directories if they don't exist
         file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Backup existing file if overwriting
-        backup_created = None
-        if file_path.exists() and overwrite:
-            backup_path = file_path.with_suffix(file_path.suffix + '.bak')
-            backup_counter = 1
-            while backup_path.exists():
-                backup_path = file_path.with_suffix(f'{file_path.suffix}.bak{backup_counter}')
-                backup_counter += 1
-            
-            # Copy existing file to backup
-            shutil.copy2(file_path, backup_path)
-            backup_created = str(backup_path)
-            logger.info(f"Created backup: {backup_path}")
+        # No backup creation - backup functionality disabled
         
         # Write content to file
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -65,8 +53,7 @@ def create_file(path: str, content: str, overwrite: bool = False) -> Dict[str, A
             "directories_created": not file_path.parent.exists()
         }
         
-        if backup_created:
-            result["backup_created"] = backup_created
+        # Backup functionality disabled
             
         return result
         
@@ -208,13 +195,13 @@ def read_file_with_lines(path: str, start_line: Optional[int] = None, end_line: 
         }
 
 
-def delete_file(path: str, create_backup: bool = True) -> Dict[str, Any]:
+def delete_file(path: str, create_backup: bool = False) -> Dict[str, Any]:
     """
     Delete a file with optional backup creation.
     
     Args:
         path: The file path to delete
-        create_backup: Whether to create a backup before deletion (default: True)
+        create_backup: Whether to create a backup before deletion (default: False)
         
     Returns:
         Dictionary with deletion results and file information
@@ -231,6 +218,7 @@ def delete_file(path: str, create_backup: bool = True) -> Dict[str, Any]:
         # Get file info before deletion
         file_size = file_path.stat().st_size
         
+        # Backup functionality disabled by default
         backup_created = None
         if create_backup:
             # Create backup with timestamp to avoid conflicts
