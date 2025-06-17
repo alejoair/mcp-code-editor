@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""
+MCP Code Editor Server
+
+A FastMCP server providing powerful code editing tools including:
+- Precise file modifications with diff-based operations
+- File creation and reading with line numbers
+- And more tools for code editing workflows
+
+This modular server is designed to be easily extensible.
+"""
+
+import logging
+import sys
+from pathlib import Path
+
+# Add the project root to Python path for imports
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+from fastmcp import FastMCP
+
+# Import tool functions
+from tools import apply_diff, create_file, read_file_with_lines
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create the FastMCP server
+mcp = FastMCP(
+    name="MCPCodeEditor",
+    instructions="""
+    MCP Code Editor provides powerful tools for code editing workflows:
+    
+    • apply_diff: Make precise file modifications using structured diff blocks
+    • create_file: Create new files with content and backup support
+    • read_file_with_lines: Read files with line numbers and range filtering
+    
+    Perfect for automated code editing, refactoring, and file management tasks.
+    """
+)
+
+# Register tools with the MCP server
+@mcp.tool
+def apply_diff_tool(path: str, blocks: list) -> dict:
+    """Apply precise file modifications using structured diff blocks."""
+    return apply_diff(path, blocks)
+
+@mcp.tool 
+def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
+    """Create a new file with the specified content."""
+    return create_file(path, content, overwrite)
+
+@mcp.tool
+def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None) -> dict:
+    """Read a text file and return its content with line numbers."""
+    return read_file_with_lines(path, start_line, end_line)
+
+if __name__ == "__main__":
+    logger.info("Starting MCP Code Editor Server...")
+    
+    # Run the server with STDIO transport (default)
+    mcp.run()
+    
+    # For HTTP transport, uncomment:
+    # mcp.run(transport="streamable-http", host="127.0.0.1", port=9000)
