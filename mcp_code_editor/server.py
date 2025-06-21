@@ -1,33 +1,30 @@
 #!/usr/bin/env python3
 """
-MCP Code Editor Server
+MCP Code Editor Server - Simple Entry Point
 
-A FastMCP server providing powerful code editing tools including:
-- Precise file modifications with diff-based operations
-- File creation and reading with line numbers
-- And more tools for code editing workflows
-
-This modular server is designed to be easily extensible.
+A direct entry point without complex path manipulation,
+similar to mcp-requests structure for better Termux compatibility.
 """
 
+from fastmcp import FastMCP, Context
 import logging
-from fastmcp import FastMCP
+from typing import Dict, Any, Optional, List, Annotated
+from pydantic import Field
 
-
-from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines, delete_file,
-                                       setup_code_editor, project_files, ProjectState,
-                                       setup_code_editor_with_ast, search_definitions, get_file_definitions,
-                                       update_file_ast_index, has_structural_changes,
-                                       index_library, search_library, get_indexed_libraries, get_library_summary,
-                                       start_console_process, check_console, send_to_console, list_console_processes,
-                                       terminate_console_process, cleanup_terminated_processes)
+# Import all the tools from the package
+from mcp_code_editor.tools import (
+    apply_diff, create_file, read_file_with_lines, delete_file,
+    setup_code_editor, project_files, ProjectState,
+    setup_code_editor_with_ast, search_definitions, get_file_definitions,
+    update_file_ast_index, has_structural_changes,
+    index_library, search_library, get_indexed_libraries, get_library_summary,
+    start_console_process, check_console, send_to_console, list_console_processes,
+    terminate_console_process, cleanup_terminated_processes
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Import Context for state management
-from fastmcp import Context
 
 # Create the FastMCP server
 mcp = FastMCP(
@@ -57,9 +54,13 @@ mcp = FastMCP(
 # Initialize project state
 mcp.project_state = ProjectState()
 
-# Register tools with the MCP server
+# Register all tools with the MCP server
 @mcp.tool
-async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
+async def apply_diff_tool(
+    path: str, 
+    blocks: List[Dict[str, Any]], 
+    ctx: Context = None
+) -> Dict[str, Any]:
     """Apply precise file modifications using structured diff blocks."""
     result = apply_diff(path, blocks)
     
@@ -75,30 +76,44 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     return result
 
 @mcp.tool 
-def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
+def create_file_tool(
+    path: str, 
+    content: str, 
+    overwrite: bool = False
+) -> Dict[str, Any]:
     """Create a new file with the specified content."""
     return create_file(path, content, overwrite)
 
 @mcp.tool
-def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None) -> dict:
+def read_file_with_lines_tool(
+    path: str, 
+    start_line: Optional[int] = None, 
+    end_line: Optional[int] = None
+) -> Dict[str, Any]:
     """Read a text file and return its content with line numbers."""
     return read_file_with_lines(path, start_line, end_line)
 
 @mcp.tool
-def delete_file_tool(path: str, create_backup: bool = True) -> dict:
+def delete_file_tool(
+    path: str, 
+    create_backup: bool = True
+) -> Dict[str, Any]:
     """Delete a file with optional backup creation."""
     return delete_file(path, create_backup)
 
 @mcp.tool
-async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Context = None) -> dict:
+async def setup_code_editor_tool(
+    path: str, 
+    analyze_ast: bool = True, 
+    ctx: Context = None
+) -> Dict[str, Any]:
     """Setup code editor by analyzing project structure, .gitignore rules, and optionally AST."""
     result = setup_code_editor_with_ast(path, analyze_ast)
     
     # If setup was successful, store the state in the server
     if result.get("success"):
-        # Store the project state in the server for later use
-        from tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
-        from tools.ast_analyzer import build_ast_index
+        from mcp_code_editor.tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
+        from mcp_code_editor.tools.ast_analyzer import build_ast_index
         from pathlib import Path
         from datetime import datetime
         
@@ -137,11 +152,11 @@ async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Conte
 
 @mcp.tool
 async def project_files_tool(
-    filter_extensions: list = None, 
-    max_depth: int = None, 
+    filter_extensions: Optional[List[str]] = None, 
+    max_depth: Optional[int] = None, 
     format_as_tree: bool = True, 
     ctx: Context = None
-) -> dict:
+) -> Dict[str, Any]:
     """Get project files using cached setup with filtering options."""
     try:
         # Get the project state from server context
@@ -172,11 +187,11 @@ async def project_files_tool(
 @mcp.tool
 async def get_code_definition(
     identifier: str,
-    context_file: str = None,
+    context_file: Optional[str] = None,
     definition_type: str = "any",
     include_usage: bool = False,
     ctx: Context = None
-) -> dict:
+) -> Dict[str, Any]:
     """
     Get definitions of functions, classes, variables, and imports from the project.
     
@@ -227,9 +242,9 @@ async def get_code_definition(
                 }
             }
         
-        # Prepare results
+        # Prepare results (limit to top 10)
         definitions = []
-        for match in matches[:10]:  # Limit to top 10 results
+        for match in matches[:10]:
             definition = {
                 "name": match["name"],
                 "type": match["type"],
@@ -302,32 +317,19 @@ async def get_code_definition(
             "identifier": identifier
         }
 
-def test_new_function():
-    """This is a test function added via apply_diff."""
-    return "Hello from new function!"
-
 @mcp.tool
 async def index_library_tool(
     library_name: str,
     include_private: bool = False,
     ctx: Context = None
-) -> dict:
-    """
-    Index an external Python library for code analysis.
-    
-    Args:
-        library_name: Name of the library to index (e.g., 'fastmcp', 'pathlib')
-        include_private: Whether to include private members (starting with _)
-        
-    Returns:
-        Dictionary with indexing results and library information
-    """
+) -> Dict[str, Any]:
+    """Index an external Python library for code analysis."""
     try:
         await ctx.info(f"Indexing library '{library_name}'...")
         
         result = index_library(library_name, include_private)
         
-        if result.get("success", True):  # Assume success if not explicitly failed
+        if result.get("success", True):
             await ctx.info(f"Library '{library_name}' indexed successfully: {result.get('total_definitions', 0)} definitions")
         else:
             await ctx.error(f"Failed to index library '{library_name}': {result.get('message', 'Unknown error')}")
@@ -349,18 +351,8 @@ async def search_library_tool(
     query: str,
     definition_type: str = "any",
     ctx: Context = None
-) -> dict:
-    """
-    Search for definitions within an indexed library.
-    
-    Args:
-        library_name: Name of the library to search in
-        query: Search term (function/class/variable name)
-        definition_type: Filter by type ("class", "function", "variable", "any")
-        
-    Returns:
-        Dictionary with search results
-    """
+) -> Dict[str, Any]:
+    """Search for definitions within an indexed library."""
     try:
         # Check if library is indexed
         indexed_libs = get_indexed_libraries()
@@ -417,13 +409,8 @@ async def search_library_tool(
         }
 
 @mcp.tool
-async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
-    """
-    List all currently indexed libraries with summary information.
-    
-    Returns:
-        Dictionary with list of indexed libraries and their summaries
-    """
+async def list_indexed_libraries_tool(ctx: Context = None) -> Dict[str, Any]:
+    """List all currently indexed libraries with summary information."""
     try:
         indexed_libs = get_indexed_libraries()
         
@@ -465,25 +452,13 @@ async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
 @mcp.tool
 async def start_console_process_tool(
     command: str,
-    working_dir: str = None,
-    env_vars: dict = None,
-    name: str = None,
+    working_dir: Optional[str] = None,
+    env_vars: Optional[Dict[str, str]] = None,
+    name: Optional[str] = None,
     shell: bool = False,
     ctx: Context = None
-) -> dict:
-    """
-    Start an interactive console process.
-    
-    Args:
-        command: The command to execute
-        working_dir: Working directory for the process (optional)
-        env_vars: Additional environment variables (optional)
-        name: Descriptive name for the process (optional)
-        shell: Whether to use shell for execution (optional)
-        
-    Returns:
-        Dictionary with process information and status
-    """
+) -> Dict[str, Any]:
+    """Start an interactive console process."""
     try:
         await ctx.info(f"Starting console process: {command}")
         
@@ -510,26 +485,11 @@ async def check_console_tool(
     lines: int = 50,
     include_timestamps: bool = False,
     filter_type: str = "all",
-    since_timestamp: float = None,
+    since_timestamp: Optional[float] = None,
     raw_output: bool = False,
     ctx: Context = None
-) -> dict:
-    """
-    Get a snapshot of console output from an interactive process.
-    
-    Note: This function includes a 10-second delay before execution.
-    
-    Args:
-        process_id: ID of the process to check
-        lines: Number of recent lines to retrieve
-        include_timestamps: Whether to include timestamps in output
-        filter_type: Filter output by type ("all", "stdout", "stderr", "input")
-        since_timestamp: Only return output after this timestamp
-        raw_output: Return raw terminal output or processed
-        
-    Returns:
-        Dictionary with console snapshot and metadata
-    """
+) -> Dict[str, Any]:
+    """Get a snapshot of console output from an interactive process. Includes a 10-second delay before execution."""
     import asyncio
     
     try:
@@ -561,25 +521,11 @@ async def send_to_console_tool(
     send_enter: bool = True,
     wait_for_response: bool = False,
     response_timeout: int = 5,
-    expect_pattern: str = None,
+    expect_pattern: Optional[str] = None,
     clear_input_echo: bool = True,
     ctx: Context = None
-) -> dict:
-    """
-    Send input to an interactive console process.
-    
-    Args:
-        process_id: ID of the process to send input to
-        input_text: Text to send to the process
-        send_enter: Whether to append newline to input
-        wait_for_response: Whether to wait for response before returning
-        response_timeout: Timeout in seconds for waiting for response
-        expect_pattern: Regex pattern to wait for in response
-        clear_input_echo: Whether to filter input echo from output
-        
-    Returns:
-        Dictionary with send status and response if waited
-    """
+) -> Dict[str, Any]:
+    """Send input to an interactive console process."""
     try:
         await ctx.info(f"Sending input to console {process_id}: {input_text}")
         
@@ -611,17 +557,8 @@ async def list_console_processes_tool(
     include_terminated: bool = False,
     summary_only: bool = True,
     ctx: Context = None
-) -> dict:
-    """
-    List all console processes.
-    
-    Args:
-        include_terminated: Whether to include terminated processes
-        summary_only: Return only summary or full details
-        
-    Returns:
-        Dictionary with list of processes and their status
-    """
+) -> Dict[str, Any]:
+    """List all console processes."""
     try:
         result = list_console_processes(include_terminated, summary_only)
         
@@ -644,18 +581,8 @@ async def terminate_console_process_tool(
     force: bool = False,
     timeout: int = 10,
     ctx: Context = None
-) -> dict:
-    """
-    Terminate a console process.
-    
-    Args:
-        process_id: ID of the process to terminate
-        force: Whether to force kill the process
-        timeout: Timeout before force killing
-        
-    Returns:
-        Dictionary with termination status
-    """
+) -> Dict[str, Any]:
+    """Terminate a console process."""
     try:
         await ctx.info(f"Terminating console process {process_id} (force={force})")
         
@@ -678,13 +605,8 @@ async def terminate_console_process_tool(
         }
 
 @mcp.tool
-async def cleanup_terminated_processes_tool(ctx: Context = None) -> dict:
-    """
-    Clean up terminated processes from the registry.
-    
-    Returns:
-        Dictionary with cleanup results
-    """
+async def cleanup_terminated_processes_tool(ctx: Context = None) -> Dict[str, Any]:
+    """Clean up terminated processes from the registry."""
     try:
         result = cleanup_terminated_processes()
         
@@ -707,9 +629,7 @@ def main():
     
     # Run the server with STDIO transport (default)
     mcp.run()
-    
-    # For HTTP transport, uncomment:
-    # mcp.run(transport="streamable-http", host="127.0.0.1", port=9000)
 
+# Entry point for direct execution (like mcp-requests)
 if __name__ == "__main__":
     main()

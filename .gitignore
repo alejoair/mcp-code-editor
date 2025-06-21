@@ -1,5 +1,8 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+
+# Test environments
+test_env/
 *.py[cod]
 *$py.class
 

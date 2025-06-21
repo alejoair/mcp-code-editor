@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-code-editor"
-version = "0.1.10"
+version = "0.1.11"
 authors = [
     {name = "MCP Code Editor Team", email = "mcpcodeeditor@example.com"},
 ]
@@ -35,7 +35,7 @@ dependencies = [
 "Source" = "https://github.com/mcp-code-editor/mcp-code-editor"
 
 [project.scripts]
-mcp-code-editor = "mcp_code_editor.cli:main"
+mcp-code-editor = "mcp_code_editor.server:main"
 
 [tool.setuptools]
 packages = {"find" = {}}

@@ -3,7 +3,7 @@ Apply diff tool for precise file modifications.
 """
 import logging
 from typing import Dict, List, Any
-from core.models import DiffBlock, DiffBuilder, FileModifier
+from ..core.models import DiffBlock, DiffBuilder, FileModifier
 
 logger = logging.getLogger(__name__)
 
