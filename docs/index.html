@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Code Editor - AI-Powered Code Editing Tools</title>
+    <meta name="description" content="A powerful FastMCP server providing advanced code editing tools with AI-first architecture. Compatible with Termux and cross-platform.">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fas fa-code nav-icon"></i>
+                <span>MCP Code Editor</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#features" class="nav-link">Features</a></li>
+                <li><a href="#tools" class="nav-link">Tools</a></li>
+                <li><a href="#installation" class="nav-link">Installation</a></li>
+                <li><a href="https://github.com/alejoair/mcp-code-editor" class="nav-link" target="_blank">
+                    <i class="fab fa-github"></i>
+                </a></li>
+            </ul>
+            <div class="nav-toggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-background">
+            <div class="code-particles"></div>
+        </div>
+        <div class="hero-container">
+            <div class="hero-content">
+                <div class="hero-badge">
+                    <i class="fas fa-rocket"></i>
+                    <span>AI-First Architecture</span>
+                </div>
+                <h1 class="hero-title">
+                    Transform Code Editing with
+                    <span class="gradient-text">AI Intelligence</span>
+                </h1>
+                <p class="hero-description">
+                    A powerful FastMCP server providing advanced code editing tools with AST analysis, 
+                    smart search, and seamless AI integration. Compatible with Termux and cross-platform.
+                </p>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <div class="stat-number">500+</div>
+                        <div class="stat-label">Downloads</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">15+</div>
+                        <div class="stat-label">Tools</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">100%</div>
+                        <div class="stat-label">Python</div>
+                    </div>
+                </div>
+                <div class="hero-actions">
+                    <a href="#installation" class="btn btn-primary">
+                        <i class="fas fa-download"></i>
+                        Get Started
+                    </a>
+                    <a href="https://github.com/alejoair/mcp-code-editor" class="btn btn-secondary" target="_blank">
+                        <i class="fab fa-github"></i>
+                        View Source
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <div class="section-header">
+                <h2>Powerful Features for Modern Development</h2>
+                <p>Built with AI-first architecture and cutting-edge technology</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <h3>AST-Powered Intelligence</h3>
+                    <p>Deep code analysis with Abstract Syntax Tree parsing for intelligent code understanding and navigation.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-search"></i>
+                    </div>
+                    <h3>Smart Code Search</h3>
+                    <p>Find functions, classes, and variables with context-aware search and relevance scoring.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-edit"></i>
+                    </div>
+                    <h3>Precise Diff Operations</h3>
+                    <p>Surgical code modifications with line-specific targeting and automated refactoring capabilities.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-mobile-alt"></i>
+                    </div>
+                    <h3>Termux Compatible</h3>
+                    <p>Full Android/Termux support with optimized architecture for mobile development environments.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-project-diagram"></i>
+                    </div>
+                    <h3>Project Management</h3>
+                    <p>Comprehensive project analysis with file discovery, structure mapping, and Git integration.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-terminal"></i>
+                    </div>
+                    <h3>Console Integration</h3>
+                    <p>Interactive process management with real-time console output monitoring and command execution.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tools Section -->
+    <section id="tools" class="tools">
+        <div class="container">
+            <div class="section-header">
+                <h2>Comprehensive Tool Suite</h2>
+                <p>15+ specialized tools for every development need</p>
+            </div>
+            <div class="tools-categories">
+                <!-- Tools will be added here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="installation" class="installation">
+        <div class="container">
+            <div class="section-header">
+                <h2>Quick Installation</h2>
+                <p>Get started in seconds with simple pip install</p>
+            </div>
+            <div class="install-content">
+                <div class="code-block">
+                    <pre><code># Install from PyPI
+pip install mcp-code-editor
+
+# Start the server
+mcp-code-editor</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2025 MCP Code Editor by <a href="https://github.com/alejoair" target="_blank">alejoair</a> • MIT License</p>
+            <div style="margin-top: 1rem;">
+                <a href="https://github.com/alejoair/mcp-code-editor" target="_blank" style="color: #00D9FF; margin: 0 1rem;">GitHub</a>
+                <a href="https://pypi.org/project/mcp-code-editor/" target="_blank" style="color: #00D9FF; margin: 0 1rem;">PyPI</a>
+                <a href="https://github.com/alejoair/mcp-code-editor/issues" target="_blank" style="color: #00D9FF; margin: 0 1rem;">Issues</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="./js/script.js"></script>
+</body>
+</html>
