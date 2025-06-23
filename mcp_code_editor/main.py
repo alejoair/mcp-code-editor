@@ -94,6 +94,8 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     # AST-powered pre-analysis if enabled
     ast_warnings = []
     ast_recommendations = []
+    dependency_analysis = {}
+    impact_summary = {}
     
     if ctx:
         state = getattr(ctx.fastmcp, 'project_state', None)
@@ -105,6 +107,28 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                 # Collect warnings and recommendations for the response
                 ast_warnings = pre_analysis.get("warnings", [])
                 ast_recommendations = pre_analysis.get("recommendations", [])
+                
+                # NUEVO: Análisis de dependencias automático
+                from mcp_code_editor.tools.dependency_analyzer import enhance_apply_diff_with_dependencies
+                dependency_result = enhance_apply_diff_with_dependencies(path, blocks, state.ast_index)
+                
+                dependency_analysis = dependency_result.get("dependency_analysis", {})
+                impact_summary = dependency_result.get("impact_summary", {})
+                
+                # Agregar información de dependencias a las advertencias
+                if dependency_analysis.get("breaking_changes"):
+                    for breaking_change in dependency_analysis["breaking_changes"]:
+                        ast_warnings.append({
+                            "type": "breaking_change",
+                            "severity": breaking_change.get("severity", "high"),
+                            "message": f"Breaking change in {breaking_change['function']}: {breaking_change['change_type']}",
+                            "affected_files": breaking_change.get("files_affected", []),
+                            "affected_callers": breaking_change.get("affected_callers", 0)
+                        })
+                
+                # Agregar recomendaciones de dependencias
+                if dependency_analysis.get("recommendations"):
+                    ast_recommendations.extend(dependency_analysis["recommendations"])
                 
                 # Check if we should proceed
                 if not pre_analysis.get("should_proceed", True):
@@ -123,6 +147,9 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                     "severity": "low", 
                     "message": f"AST analysis failed: {str(e)}"
                 })
+                # Initialize empty dependency analysis on error
+                dependency_analysis = {}
+                impact_summary = {}
     
     # Apply the diff
     result = apply_diff(path, blocks)
@@ -140,15 +167,30 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
             result["ast_warnings"] = ast_warnings
             result["ast_recommendations"] = ast_recommendations
             
-            # Provide clear guidance to LLM
-            if ast_warnings and any(w.get("severity") == "high" for w in ast_warnings):
+            # NUEVO: Agregar análisis de dependencias
+            if dependency_analysis:
+                result["dependency_analysis"] = dependency_analysis
+                result["impact_summary"] = impact_summary
+            
+            # Provide clear guidance to LLM with dependency information
+            impact_level = dependency_analysis.get("impact_level", "low")
+            files_to_review = dependency_analysis.get("files_to_review", [])
+            breaking_changes = dependency_analysis.get("breaking_changes", [])
+            
+            if breaking_changes and impact_level in ["critical", "high"]:
+                result["suggested_next_action"] = f"🚨 CRITICAL: Breaking changes detected affecting {len(files_to_review)} files. Review: {', '.join(files_to_review[:3])}{'...' if len(files_to_review) > 3 else ''}"
+            elif ast_warnings and any(w.get("severity") == "high" for w in ast_warnings):
                 result["suggested_next_action"] = "HIGH PRIORITY: Test the changes immediately as breaking changes were detected."
+            elif impact_level == "high" or (impact_level == "medium" and files_to_review):
+                result["suggested_next_action"] = f"📋 MEDIUM IMPACT: Review {len(files_to_review)} affected files: {', '.join(files_to_review[:2])}{'...' if len(files_to_review) > 2 else ''}"
             elif ast_warnings and any(w.get("severity") == "medium" for w in ast_warnings):
                 result["suggested_next_action"] = "RECOMMENDED: Use get_code_definition to verify affected functions still work correctly."
+            elif files_to_review:
+                result["suggested_next_action"] = f"✅ LOW IMPACT: {len(files_to_review)} files may be affected, but changes appear safe."
             elif ast_warnings:
                 result["suggested_next_action"] = "Changes applied successfully. AST analysis shows low risk."
             else:
-                result["suggested_next_action"] = "Changes applied successfully. No AST issues detected."
+                result["suggested_next_action"] = "Changes applied successfully. No issues detected."
     
     return result
 
