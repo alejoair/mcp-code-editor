@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-MCP Code Editor Server - Simple Entry Point
+MCP Code Editor Server
 
-A direct entry point without complex path manipulation,
-similar to mcp-requests structure for better Termux compatibility.
+A FastMCP server providing powerful code editing tools including:
+- Precise file modifications with diff-based operations
+- File creation and reading with line numbers
+- And more tools for code editing workflows
+
+This modular server is designed to be easily extensible.
 """
 
-from fastmcp import FastMCP, Context
 import logging
-from typing import Dict, Any, Optional, List, Annotated
-from pydantic import Field
+from typing import List, Dict
+from fastmcp import FastMCP
 
-# Import all the tools from the package
-from mcp_code_editor.tools import (
-    apply_diff, create_file, read_file_with_lines, delete_file,
-    setup_code_editor, project_files, ProjectState,
-    setup_code_editor_with_ast, search_definitions, get_file_definitions,
-    update_file_ast_index, has_structural_changes,
-    index_library, search_library, get_indexed_libraries, get_library_summary,
-    start_console_process, check_console, send_to_console, list_console_processes,
-    terminate_console_process, cleanup_terminated_processes
-)
+
+from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines, delete_file,
+                                       setup_code_editor, project_files, ProjectState,
+                                       setup_code_editor_with_ast, search_definitions, get_file_definitions,
+                                       update_file_ast_index, has_structural_changes,
+                                       index_library, search_library, get_indexed_libraries, get_library_summary,
+                                       start_console_process, check_console, send_to_console, list_console_processes,
+                                       terminate_console_process, cleanup_terminated_processes)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import Context for state management
+from fastmcp import Context
 
 # Create the FastMCP server
 mcp = FastMCP(
@@ -68,7 +72,7 @@ mcp = FastMCP(
 # Initialize project state
 mcp.project_state = ProjectState()
 
-# Register all tools with the MCP server
+# Register tools with the MCP server
 @mcp.tool
 async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     """
@@ -190,7 +194,7 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                 state.ast_index = update_file_ast_index(path, state.ast_index)
         
         # Add AST insights to successful result (ALWAYS when AST is enabled)
-        if state and getattr(state, 'ast_enabled', False):
+        if ctx and getattr(mcp, 'project_state', None) and getattr(mcp.project_state, 'ast_enabled', False):
             result["ast_warnings"] = ast_warnings
             result["ast_recommendations"] = ast_recommendations
             result["ast_enabled"] = True  # Confirm AST is working
@@ -223,11 +227,7 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     return result
 
 @mcp.tool 
-def create_file_tool(
-    path: str, 
-    content: str, 
-    overwrite: bool = False
-) -> Dict[str, Any]:
+def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
     """Create a new file with the specified content."""
     return create_file(path, content, overwrite)
 
@@ -253,7 +253,7 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     result = read_file_with_lines(path, start_line, end_line)
     
     # Enhance Python files with AST information if available
-    if result.get("success") and path.endswith('.py'):
+    if result.get("success") and path.endswith('.py') and ctx:
         state = getattr(mcp, 'project_state', None)
         # Enhanced AST integration for Python files
         if state and state.ast_enabled and hasattr(state, 'ast_index'):
@@ -306,24 +306,18 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     return result
 
 @mcp.tool
-def delete_file_tool(
-    path: str, 
-    create_backup: bool = True
-) -> Dict[str, Any]:
+def delete_file_tool(path: str, create_backup: bool = True) -> dict:
     """Delete a file with optional backup creation."""
     return delete_file(path, create_backup)
 
 @mcp.tool
-async def setup_code_editor_tool(
-    path: str, 
-    analyze_ast: bool = True, 
-    ctx: Context = None
-) -> Dict[str, Any]:
+async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Context = None) -> dict:
     """Setup code editor by analyzing project structure, .gitignore rules, and optionally AST."""
     result = setup_code_editor_with_ast(path, analyze_ast)
     
     # If setup was successful, store the state in the server
     if result.get("success"):
+        # Store the project state in the server for later use
         from mcp_code_editor.tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
         from mcp_code_editor.tools.ast_analyzer import build_ast_index
         from pathlib import Path
@@ -384,14 +378,12 @@ async def project_files_tool(
         # Use the project_files function with the stored state
         result = project_files(state, filter_extensions, max_depth, format_as_tree)
         
-        if ctx:
-            await ctx.info(f"Retrieved project files: {result['summary']['total_files']} files")
+        await ctx.info(f"Retrieved project files: {result['summary']['total_files']} files")
         
         return result
         
     except Exception as e:
-        if ctx:
-            await ctx.error(f"Error retrieving project files: {str(e)}")
+        await ctx.error(f"Error retrieving project files: {str(e)}")
         return {
             "success": False,
             "error": type(e).__name__,
@@ -482,6 +474,7 @@ def _find_identifier_usage(identifier: str, ast_index: List[Dict], definition_fi
     # Limitar resultados para evitar spam
     return usage_locations[:20]  # Top 20 usos
 
+
 @mcp.tool
 async def get_code_definition(
     identifier: str,
@@ -518,6 +511,14 @@ async def get_code_definition(
         - total_usages: Count of usage locations
         - suggested_next_action: Contextual guidance for next steps
         - Detailed metadata for each definition and usage
+        
+    Example Response:
+        {
+            "definitions": [{"name": "calculate_total", "type": "function", "file": "calc.py", ...}],
+            "usage_locations": [{"file": "order.py", "context": "Called in process_order", ...}],
+            "total_usages": 3,
+            "suggested_next_action": "Found 1 function 'calculate_total' in calc.py. Used in 3 locations..."
+        }
     """
     try:
         # Get the project state from server instance
@@ -616,7 +617,7 @@ async def get_code_definition(
             
             definitions.append(definition)
         
-        # Buscar usos/referencias del identificador si se solicita o hay definiciones
+        # NUEVO: Buscar usos/referencias del identificador si se solicita o hay definiciones
         usage_locations = []
         if include_usage or definitions:
             usage_locations = _find_identifier_usage(identifier, state.ast_index, [d["file"] for d in definitions])
@@ -645,500 +646,7 @@ async def get_code_definition(
         elif len(definitions) > 1:
             result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'.{usage_summary} Review each location before making changes to ensure you modify the correct one."
         
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error searching for definition '{identifier}': {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e),
-            "identifier": identifier
-        }
-
-# Library indexing tools
-@mcp.tool
-async def index_library_tool(
-    library_name: str,
-    include_private: bool = False,
-    ctx: Context = None
-) -> dict:
-    """Index an external Python library for code analysis."""
-    try:
-        if ctx:
-            await ctx.info(f"Indexing library '{library_name}'...")
-        
-        result = index_library(library_name, include_private)
-        
-        if result.get("success", True):
-            if ctx:
-                await ctx.info(f"Library '{library_name}' indexed successfully: {result.get('total_definitions', 0)} definitions")
-        else:
-            if ctx:
-                await ctx.error(f"Failed to index library '{library_name}': {result.get('message', 'Unknown error')}")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error indexing library '{library_name}': {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e),
-            "library_name": library_name
-        }
-
-@mcp.tool
-async def search_library_tool(
-    library_name: str,
-    query: str,
-    definition_type: str = "any",
-    ctx: Context = None
-) -> dict:
-    """Search for definitions within an indexed library."""
-    try:
-        # Check if library is indexed
-        indexed_libs = get_indexed_libraries()
-        if library_name not in indexed_libs:
-            return {
-                "success": False,
-                "error": "LibraryNotIndexed",
-                "message": f"Library '{library_name}' not indexed. Run index_library_tool first.",
-                "indexed_libraries": indexed_libs
-            }
-        
-        # Search for definitions
-        matches = search_library(library_name, query, definition_type)
-        
-        if not matches:
-            return {
-                "success": True,
-                "found": False,
-                "message": f"No definitions found for '{query}' in library '{library_name}'",
-                "library_name": library_name,
-                "query": query,
-                "search_criteria": {"type": definition_type}
-            }
-        
-        result = {
-            "success": True,
-            "found": True,
-            "library_name": library_name,
-            "query": query,
-            "total_matches": len(matches),
-            "definitions": matches[:10],
-            "search_criteria": {"type": definition_type}
-        }
-        
-        if ctx:
-            await ctx.info(f"Found {len(matches[:10])} definitions for '{query}' in '{library_name}'")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error searching library '{library_name}': {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e),
-            "library_name": library_name,
-            "query": query
-        }
-
-@mcp.tool
-async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
-    """List all currently indexed libraries with summary information."""
-    try:
-        indexed_libs = get_indexed_libraries()
-        
-        if not indexed_libs:
-            return {
-                "success": True,
-                "message": "No libraries indexed yet. Use index_library_tool to index libraries.",
-                "indexed_libraries": [],
-                "total_libraries": 0
-            }
-        
-        # Get summary for each library
-        libraries_info = []
-        for lib_name in indexed_libs:
-            summary = get_library_summary(lib_name)
-            if summary:
-                libraries_info.append(summary)
-        
-        return {
-            "success": True,
-            "message": f"Found {len(indexed_libs)} indexed libraries",
-            "indexed_libraries": indexed_libs,
-            "total_libraries": len(indexed_libs),
-            "libraries_info": libraries_info
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e)
-        }
-
-# Console process tools
-@mcp.tool
-async def start_console_process_tool(
-    command: str,
-    working_dir: str = None,
-    env_vars: dict = None,
-    name: str = None,
-    shell: bool = False,
-    ctx: Context = None
-) -> dict:
-    """Start an interactive console process."""
-    try:
-        if ctx:
-            await ctx.info(f"Starting console process: {command}")
-        
-        result = start_console_process(command, working_dir, env_vars, name, shell)
-        
-        if result.get("success"):
-            if ctx:
-                await ctx.info(f"Console process started: {result.get('process_id')} - {result.get('name')}")
-        else:
-            if ctx:
-                await ctx.error(f"Failed to start console process: {result.get('message')}")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error starting console process: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e)
-        }
-
-@mcp.tool
-async def check_console_tool(
-    process_id: str,
-    wait_seconds: int,
-    lines: int = 50,
-    include_timestamps: bool = False,
-    filter_type: str = "all",
-    since_timestamp: float = None,
-    raw_output: bool = False,
-    ctx: Context = None
-) -> dict:
-    """Get a snapshot of console output from an interactive process."""
-    import asyncio
-    
-    try:
-        if ctx:
-            await ctx.info(f"Waiting {wait_seconds} seconds before checking console {process_id}...")
-        await asyncio.sleep(wait_seconds)
-        
-        result = check_console(process_id, lines, include_timestamps, 
-                             filter_type, since_timestamp, raw_output)
-        
-        if result.get("success") and ctx:
-            await ctx.info(f"Retrieved console snapshot for {process_id}: {result.get('displayed_lines')} lines")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error checking console {process_id}: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e),
-            "process_id": process_id
-        }
-
-@mcp.tool
-async def send_to_console_tool(
-    process_id: str,
-    input_text: str,
-    send_enter: bool = True,
-    wait_for_response: bool = False,
-    response_timeout: int = 5,
-    expect_pattern: str = None,
-    clear_input_echo: bool = True,
-    ctx: Context = None
-) -> dict:
-    """Send input to an interactive console process."""
-    try:
-        if ctx:
-            await ctx.info(f"Sending input to console {process_id}: {input_text}")
-        
-        result = send_to_console(process_id, input_text, send_enter, 
-                               wait_for_response, response_timeout, 
-                               expect_pattern, clear_input_echo)
-        
-        if result.get("success") and ctx:
-            if result.get("response_received"):
-                await ctx.info(f"Input sent and response received from {process_id}")
-            else:
-                await ctx.info(f"Input sent to {process_id}")
-        elif not result.get("success") and ctx:
-            await ctx.error(f"Failed to send input to {process_id}: {result.get('message')}")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error sending input to console {process_id}: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e),
-            "process_id": process_id
-        }
-
-@mcp.tool
-async def list_console_processes_tool(
-    include_terminated: bool = False,
-    summary_only: bool = True,
-    ctx: Context = None
-) -> dict:
-    """List all console processes."""
-    try:
-        result = list_console_processes(include_terminated, summary_only)
-        
-        if result.get("success") and ctx:
-            await ctx.info(f"Listed console processes: {result.get('active_processes')} active, {result.get('terminated_processes')} terminated")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error listing console processes: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e)
-        }
-
-@mcp.tool
-async def terminate_console_process_tool(
-    process_id: str,
-    force: bool = False,
-    timeout: int = 10,
-    ctx: Context = None
-) -> dict:
-    """Terminate a console process."""
-    try:
-        if ctx:
-            await ctx.info(f"Terminating console process {process_id} (force={force})")
-        
-        result = terminate_console_process(process_id, force, timeout)
-        
-        if result.get("success") and ctx:
-            await ctx.info(f"Console process {process_id} {result.get('action')}")
-        elif not result.get("success") and ctx:
-            await ctx.error(f"Failed to terminate {process_id}: {result.get('message')}")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error terminating console process {process_id}: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e),
-            "process_id": process_id
-        }
-
-@mcp.tool
-async def cleanup_terminated_processes_tool(ctx: Context = None) -> dict:
-    """Clean up terminated processes from the registry."""
-    try:
-        result = cleanup_terminated_processes()
-        
-        if result.get("success") and ctx:
-            await ctx.info(f"Cleaned up {len(result.get('cleaned_processes', []))} terminated processes")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error cleaning up processes: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e)
-        }
-        
-        if ctx:
-            await ctx.info(f"Listed {len(indexed_libs)} indexed libraries")
-        
-        return result
-        
-    except Exception as e:
-        if ctx:
-            await ctx.error(f"Error listing indexed libraries: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e)
-        }
-
-@mcp.tool
-async def project_files_tool(
-    filter_extensions: Optional[List[str]] = None, 
-    max_depth: Optional[int] = None, 
-    format_as_tree: bool = True, 
-    ctx: Context = None
-) -> Dict[str, Any]:
-    """Get project files using cached setup with filtering options."""
-    try:
-        # Get the project state from server context
-        state = ctx.fastmcp.project_state
-        
-        if not hasattr(state, 'setup_complete') or not state.setup_complete:
-            return {
-                "success": False,
-                "error": "ProjectNotSetup",
-                "message": "Project not setup. Please run setup_code_editor_tool first."
-            }
-        
-        # Use the project_files function with the stored state
-        result = project_files(state, filter_extensions, max_depth, format_as_tree)
-        
-        await ctx.info(f"Retrieved project files: {result['summary']['total_files']} files")
-        
-        return result
-        
-    except Exception as e:
-        await ctx.error(f"Error retrieving project files: {str(e)}")
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": str(e)
-        }
-
-@mcp.tool
-async def get_code_definition(
-    identifier: str,
-    context_file: Optional[str] = None,
-    definition_type: str = "any",
-    include_usage: bool = False,
-    ctx: Context = None
-) -> Dict[str, Any]:
-    """
-    Get definitions of functions, classes, variables, and imports from the project.
-    
-    Args:
-        identifier: Name of function/class/variable to find
-        context_file: Optional file context for prioritizing results
-        definition_type: Filter by type ("function", "class", "variable", "import", "any")
-        include_usage: Whether to include usage examples in the project
-        
-    Returns:
-        Dictionary with found definitions and metadata
-    """
-    try:
-        # Get the project state from server context
-        state = getattr(ctx.fastmcp, 'project_state', None)
-        
-        if not state or not state.setup_complete:
-            return {
-                "success": False,
-                "error": "ProjectNotSetup",
-                "message": "Project not setup. Please run setup_code_editor_tool first."
-            }
-        
-        if not state.ast_enabled:
-            return {
-                "success": False,
-                "error": "ASTNotEnabled",
-                "message": "AST analysis not enabled. Run setup with analyze_ast=True."
-            }
-        
-        # Search for definitions
-        matches = search_definitions(
-            identifier, 
-            state.ast_index, 
-            definition_type, 
-            context_file
-        )
-        
-        if not matches:
-            return {
-                "success": True,
-                "found": False,
-                "message": f"No definitions found for '{identifier}'",
-                "identifier": identifier,
-                "search_criteria": {
-                    "type": definition_type,
-                    "context_file": context_file
-                }
-            }
-        
-        # Prepare results (limit to top 10)
-        definitions = []
-        for match in matches[:10]:
-            definition = {
-                "name": match["name"],
-                "type": match["type"],
-                "file": match["file"],
-                "relevance_score": match.get("relevance_score", 0)
-            }
-            
-            # Add type-specific information
-            if match["type"] == "function":
-                definition.update({
-                    "signature": match.get("signature", ""),
-                    "line_start": match.get("line_start"),
-                    "line_end": match.get("line_end"),
-                    "is_async": match.get("is_async", False),
-                    "args": match.get("args", []),
-                    "docstring": match.get("docstring"),
-                    "decorators": match.get("decorators", [])
-                })
-            
-            elif match["type"] == "class":
-                definition.update({
-                    "line_start": match.get("line_start"),
-                    "line_end": match.get("line_end"),
-                    "methods": match.get("methods", []),
-                    "inheritance": match.get("inheritance", []),
-                    "docstring": match.get("docstring"),
-                    "decorators": match.get("decorators", [])
-                })
-            
-            elif match["type"] == "import":
-                definition.update({
-                    "line": match.get("line"),
-                    "module": match.get("module"),
-                    "import_type": match.get("import_type"),
-                    "from_name": match.get("from_name"),
-                    "alias": match.get("alias")
-                })
-            
-            elif match["type"] == "variable":
-                definition.update({
-                    "line": match.get("line"),
-                    "value_type": match.get("value_type"),
-                    "is_constant": match.get("is_constant", False)
-                })
-            
-            definitions.append(definition)
-        
-        result = {
-            "success": True,
-            "found": True,
-            "identifier": identifier,
-            "total_matches": len(matches),
-            "definitions": definitions,
-            "search_criteria": {
-                "type": definition_type,
-                "context_file": context_file
-            }
-        }
-        
-        await ctx.info(f"Found {len(definitions)} definitions for '{identifier}'")
+        # All processing complete
         
         return result
         
@@ -1151,19 +659,29 @@ async def get_code_definition(
             "identifier": identifier
         }
 
+
 @mcp.tool
 async def index_library_tool(
     library_name: str,
     include_private: bool = False,
     ctx: Context = None
-) -> Dict[str, Any]:
-    """Index an external Python library for code analysis."""
+) -> dict:
+    """
+    Index an external Python library for code analysis.
+    
+    Args:
+        library_name: Name of the library to index (e.g., 'fastmcp', 'pathlib')
+        include_private: Whether to include private members (starting with _)
+        
+    Returns:
+        Dictionary with indexing results and library information
+    """
     try:
         await ctx.info(f"Indexing library '{library_name}'...")
         
         result = index_library(library_name, include_private)
         
-        if result.get("success", True):
+        if result.get("success", True):  # Assume success if not explicitly failed
             await ctx.info(f"Library '{library_name}' indexed successfully: {result.get('total_definitions', 0)} definitions")
         else:
             await ctx.error(f"Failed to index library '{library_name}': {result.get('message', 'Unknown error')}")
@@ -1185,8 +703,18 @@ async def search_library_tool(
     query: str,
     definition_type: str = "any",
     ctx: Context = None
-) -> Dict[str, Any]:
-    """Search for definitions within an indexed library."""
+) -> dict:
+    """
+    Search for definitions within an indexed library.
+    
+    Args:
+        library_name: Name of the library to search in
+        query: Search term (function/class/variable name)
+        definition_type: Filter by type ("class", "function", "variable", "any")
+        
+    Returns:
+        Dictionary with search results
+    """
     try:
         # Check if library is indexed
         indexed_libs = get_indexed_libraries()
@@ -1243,8 +771,13 @@ async def search_library_tool(
         }
 
 @mcp.tool
-async def list_indexed_libraries_tool(ctx: Context = None) -> Dict[str, Any]:
-    """List all currently indexed libraries with summary information."""
+async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
+    """
+    List all currently indexed libraries with summary information.
+    
+    Returns:
+        Dictionary with list of indexed libraries and their summaries
+    """
     try:
         indexed_libs = get_indexed_libraries()
         
@@ -1286,13 +819,25 @@ async def list_indexed_libraries_tool(ctx: Context = None) -> Dict[str, Any]:
 @mcp.tool
 async def start_console_process_tool(
     command: str,
-    working_dir: Optional[str] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    name: Optional[str] = None,
+    working_dir: str = None,
+    env_vars: dict = None,
+    name: str = None,
     shell: bool = False,
     ctx: Context = None
-) -> Dict[str, Any]:
-    """Start an interactive console process."""
+) -> dict:
+    """
+    Start an interactive console process.
+    
+    Args:
+        command: The command to execute
+        working_dir: Working directory for the process (optional)
+        env_vars: Additional environment variables (optional)
+        name: Descriptive name for the process (optional)
+        shell: Whether to use shell for execution (optional)
+        
+    Returns:
+        Dictionary with process information and status
+    """
     try:
         await ctx.info(f"Starting console process: {command}")
         
@@ -1320,11 +865,25 @@ async def check_console_tool(
     lines: int = 50,
     include_timestamps: bool = False,
     filter_type: str = "all",
-    since_timestamp: Optional[float] = None,
+    since_timestamp: float = None,
     raw_output: bool = False,
     ctx: Context = None
-) -> Dict[str, Any]:
-    """Get a snapshot of console output from an interactive process. Includes a configurable delay before execution."""
+) -> dict:
+    """
+    Get a snapshot of console output from an interactive process.
+    
+    Args:
+        process_id: ID of the process to check
+        wait_seconds: Number of seconds to wait before checking console (required)
+        lines: Number of recent lines to retrieve
+        include_timestamps: Whether to include timestamps in output
+        filter_type: Filter output by type ("all", "stdout", "stderr", "input")
+        since_timestamp: Only return output after this timestamp
+        raw_output: Return raw terminal output or processed
+        
+    Returns:
+        Dictionary with console snapshot and metadata
+    """
     import asyncio
     
     try:
@@ -1356,11 +915,25 @@ async def send_to_console_tool(
     send_enter: bool = True,
     wait_for_response: bool = False,
     response_timeout: int = 5,
-    expect_pattern: Optional[str] = None,
+    expect_pattern: str = None,
     clear_input_echo: bool = True,
     ctx: Context = None
-) -> Dict[str, Any]:
-    """Send input to an interactive console process."""
+) -> dict:
+    """
+    Send input to an interactive console process.
+    
+    Args:
+        process_id: ID of the process to send input to
+        input_text: Text to send to the process
+        send_enter: Whether to append newline to input
+        wait_for_response: Whether to wait for response before returning
+        response_timeout: Timeout in seconds for waiting for response
+        expect_pattern: Regex pattern to wait for in response
+        clear_input_echo: Whether to filter input echo from output
+        
+    Returns:
+        Dictionary with send status and response if waited
+    """
     try:
         await ctx.info(f"Sending input to console {process_id}: {input_text}")
         
@@ -1392,8 +965,17 @@ async def list_console_processes_tool(
     include_terminated: bool = False,
     summary_only: bool = True,
     ctx: Context = None
-) -> Dict[str, Any]:
-    """List all console processes."""
+) -> dict:
+    """
+    List all console processes.
+    
+    Args:
+        include_terminated: Whether to include terminated processes
+        summary_only: Return only summary or full details
+        
+    Returns:
+        Dictionary with list of processes and their status
+    """
     try:
         result = list_console_processes(include_terminated, summary_only)
         
@@ -1416,8 +998,18 @@ async def terminate_console_process_tool(
     force: bool = False,
     timeout: int = 10,
     ctx: Context = None
-) -> Dict[str, Any]:
-    """Terminate a console process."""
+) -> dict:
+    """
+    Terminate a console process.
+    
+    Args:
+        process_id: ID of the process to terminate
+        force: Whether to force kill the process
+        timeout: Timeout before force killing
+        
+    Returns:
+        Dictionary with termination status
+    """
     try:
         await ctx.info(f"Terminating console process {process_id} (force={force})")
         
@@ -1440,8 +1032,13 @@ async def terminate_console_process_tool(
         }
 
 @mcp.tool
-async def cleanup_terminated_processes_tool(ctx: Context = None) -> Dict[str, Any]:
-    """Clean up terminated processes from the registry."""
+async def cleanup_terminated_processes_tool(ctx: Context = None) -> dict:
+    """
+    Clean up terminated processes from the registry.
+    
+    Returns:
+        Dictionary with cleanup results
+    """
     try:
         result = cleanup_terminated_processes()
         
@@ -1464,7 +1061,9 @@ def main():
     
     # Run the server with STDIO transport (default)
     mcp.run()
+    
+    # For HTTP transport, uncomment:
+    # mcp.run(transport="streamable-http", host="127.0.0.1", port=9000)
 
-# Entry point for direct execution (like mcp-requests)
 if __name__ == "__main__":
     main()
