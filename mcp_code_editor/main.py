@@ -60,7 +60,37 @@ mcp.project_state = ProjectState()
 # Register tools with the MCP server
 @mcp.tool
 async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
-    """Apply precise file modifications using structured diff blocks."""
+    """
+    Apply precise file modifications using structured diff blocks.
+    
+    Each block in the list must be a dictionary with the following structure:
+    {
+        "start_line": int,              # Required: Starting line number (1-indexed)
+        "end_line": int,                # Optional: Ending line number  
+        "search_content": str,          # Required: Exact content to find
+        "replace_content": str          # Required: Content to replace with
+    }
+    
+    Example:
+    [
+        {
+            "start_line": 10,
+            "end_line": 12,
+            "search_content": "def old_function():\n    return 'old'",
+            "replace_content": "def new_function():\n    return 'new'"
+        }
+    ]
+    
+    Args:
+        path: File path to modify
+        blocks: List of diff block dictionaries (see structure above)
+        ctx: MCP context (optional)
+        
+    Returns:
+        Dictionary with operation results and statistics
+        
+    Note: Content matching uses fuzzy whitespace matching but requires exact text.
+    """
     result = apply_diff(path, blocks)
     
     # Auto-update AST if enabled and changes affect structure

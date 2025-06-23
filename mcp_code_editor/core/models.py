@@ -11,11 +11,54 @@ logger = logging.getLogger(__name__)
 
 
 class DiffBlock(BaseModel):
-    """Represents a single SEARCH/REPLACE block in a diff."""
-    start_line: int = Field(..., description="Starting line number for the search block")
-    end_line: Optional[int] = Field(None, description="Ending line number for the search block (optional)")
-    search_content: str = Field(..., description="The exact content to search for and replace")
-    replace_content: str = Field(..., description="The new content to replace with")
+    """
+    Represents a single SEARCH/REPLACE block in a diff.
+    
+    This model validates the structure of diff blocks to ensure they contain
+    all required fields with proper types.
+    """
+    start_line: int = Field(..., description="Starting line number for the search block (1-indexed)", gt=0)
+    end_line: Optional[int] = Field(None, description="Ending line number for the search block (optional, 1-indexed)", gt=0)
+    search_content: str = Field(..., description="The exact content to search for and replace", min_length=1)
+    replace_content: str = Field(..., description="The new content to replace with (can be empty string for deletion)")
+    
+    @classmethod
+    def validate_block_dict(cls, block_dict: dict) -> 'DiffBlock':
+        """
+        Validate a dictionary and convert it to a DiffBlock with helpful error messages.
+        
+        Args:
+            block_dict: Dictionary containing block data
+            
+        Returns:
+            DiffBlock instance
+            
+        Raises:
+            ValueError: With detailed error message about what's wrong
+        """
+        if not isinstance(block_dict, dict):
+            raise ValueError(f"Block must be a dictionary, got {type(block_dict).__name__}")
+        
+        required_fields = {'start_line', 'search_content', 'replace_content'}
+        missing_fields = required_fields - set(block_dict.keys())
+        
+        if missing_fields:
+            raise ValueError(
+                f"Missing required fields: {', '.join(missing_fields)}. "
+                f"Required format: {{\"start_line\": int, \"search_content\": str, \"replace_content\": str}}"
+            )
+        
+        # Check for old/incorrect field names
+        if 'old_content' in block_dict or 'new_content' in block_dict:
+            raise ValueError(
+                "Detected old field names 'old_content'/'new_content'. "
+                "Please use 'search_content'/'replace_content' instead."
+            )
+        
+        try:
+            return cls(**block_dict)
+        except Exception as e:
+            raise ValueError(f"Invalid block structure: {str(e)}")
 
 
 class DiffBuilder:
