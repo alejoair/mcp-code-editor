@@ -91,16 +91,62 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
         
     Note: Content matching uses fuzzy whitespace matching but requires exact text.
     """
+    # AST-powered pre-analysis if enabled
+    ast_warnings = []
+    ast_recommendations = []
+    
+    if ctx:
+        state = getattr(ctx.fastmcp, 'project_state', None)
+        if state and state.ast_enabled and hasattr(state, 'ast_index'):
+            try:
+                from .ast_integration import enhance_apply_diff_with_ast
+                pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
+                
+                # Collect warnings and recommendations for the response
+                ast_warnings = pre_analysis.get("warnings", [])
+                ast_recommendations = pre_analysis.get("recommendations", [])
+                
+                # Check if we should proceed
+                if not pre_analysis.get("should_proceed", True):
+                    return {
+                        "success": False,
+                        "error": "AST_VALIDATION_FAILED",
+                        "message": "AST analysis detected issues that prevent applying this diff safely.",
+                        "ast_warnings": ast_warnings,
+                        "ast_recommendations": ast_recommendations,
+                        "suggested_action": "Review the warnings and modify the diff accordingly, or use get_code_definition to check dependencies first."
+                    }
+                    
+            except Exception as e:
+                ast_warnings.append({
+                    "type": "ast_analysis_error",
+                    "severity": "low", 
+                    "message": f"AST analysis failed: {str(e)}"
+                })
+    
+    # Apply the diff
     result = apply_diff(path, blocks)
     
-    # Auto-update AST if enabled and changes affect structure
-    if result.get("success") and ctx:
-        state = getattr(ctx.fastmcp, 'project_state', None)
-        if state and state.ast_enabled:
-            if has_structural_changes(blocks):
-                # Update AST index for the modified file
+    # Enhance result with AST information for LLM decision making
+    if result.get("success"):
+        # Update AST if needed
+        if ctx:
+            state = getattr(ctx.fastmcp, 'project_state', None)
+            if state and state.ast_enabled and has_structural_changes(blocks):
                 state.ast_index = update_file_ast_index(path, state.ast_index)
-                await ctx.info(f"AST index updated for {path}")
+        
+        # Add AST insights to successful result
+        if ast_warnings or ast_recommendations:
+            result["ast_warnings"] = ast_warnings
+            result["ast_recommendations"] = ast_recommendations
+            
+            # Provide clear guidance to LLM
+            if any(w["severity"] == "high" for w in ast_warnings):
+                result["suggested_next_action"] = "HIGH PRIORITY: Test the changes immediately as breaking changes were detected."
+            elif any(w["severity"] == "medium" for w in ast_warnings):
+                result["suggested_next_action"] = "RECOMMENDED: Use get_code_definition to verify affected functions still work correctly."
+            else:
+                result["suggested_next_action"] = "Changes applied successfully. AST analysis shows low risk."
     
     return result
 
@@ -110,9 +156,26 @@ def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
     return create_file(path, content, overwrite)
 
 @mcp.tool
-def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None) -> dict:
-    """Read a text file and return its content with line numbers."""
-    return read_file_with_lines(path, start_line, end_line)
+async def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None, ctx: Context = None) -> dict:
+    """Read a text file and return its content with line numbers, enhanced with AST info for Python files."""
+    result = read_file_with_lines(path, start_line, end_line)
+    
+    # Enhance Python files with AST information if available
+    if result.get("success") and path.endswith('.py') and ctx:
+        state = getattr(ctx.fastmcp, 'project_state', None)
+        if state and state.ast_enabled and hasattr(state, 'ast_index'):
+            # Find definitions in this file
+            file_definitions = [d for d in state.ast_index if d.get('file') == path]
+            if file_definitions:
+                result["ast_info"] = {
+                    "definitions_found": len(file_definitions),
+                    "functions": [d["name"] for d in file_definitions if d.get("type") == "function"],
+                    "classes": [d["name"] for d in file_definitions if d.get("type") == "class"],
+                    "imports": [d["name"] for d in file_definitions if d.get("type") == "import"][:10]  # Limit to first 10
+                }
+                result["suggested_next_action"] = f"This Python file contains {len(file_definitions)} definitions. Use get_code_definition to explore specific functions or classes."
+    
+    return result
 
 @mcp.tool
 def delete_file_tool(path: str, create_backup: bool = True) -> dict:
@@ -319,7 +382,21 @@ async def get_code_definition(
             }
         }
         
-        await ctx.info(f"Found {len(definitions)} definitions for '{identifier}'")
+        # Add actionable insights for LLM
+        if definitions:
+            if len(definitions) == 1:
+                def_info = definitions[0]
+                result["suggested_next_action"] = f"Found 1 {def_info['type']} '{identifier}' in {def_info['file']}. Use read_file_with_lines_tool to see the implementation or apply_diff_tool to modify it."
+            else:
+                result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'. Review each location before making changes to ensure you modify the correct one."
+        else:
+            result = {
+                "success": True,
+                "found": False,
+                "identifier": identifier,
+                "total_matches": 0,
+                "suggested_next_action": f"No definitions found for '{identifier}'. Check spelling or search with definition_type='any' for broader results."
+            }
         
         return result
         
@@ -332,9 +409,6 @@ async def get_code_definition(
             "identifier": identifier
         }
 
-def test_new_function():
-    """This is a test function added via apply_diff."""
-    return "Hello from new function!"
 
 @mcp.tool
 async def index_library_tool(
