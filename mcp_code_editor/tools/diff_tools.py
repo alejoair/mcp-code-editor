@@ -37,10 +37,13 @@ def apply_diff(path: str, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
         diff_blocks = []
         for i, block_dict in enumerate(blocks):
             try:
-                diff_block = DiffBlock(**block_dict)
+                diff_block = DiffBlock.validate_block_dict(block_dict)
                 diff_blocks.append(diff_block)
-            except Exception as e:
+            except ValueError as e:
                 raise ValueError(f"Invalid block {i+1}: {str(e)}")
+            except Exception as e:
+                raise ValueError(f"Unexpected error in block {i+1}: {str(e)}")
+    
         
         logger.info(f"Processing {len(diff_blocks)} diff blocks for {path}")
         

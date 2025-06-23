@@ -1,0 +1,446 @@
+"""
+Dependency Analyzer - Auto-detección de dependencias para apply_diff_tool
+=========================================================================
+
+Este módulo analiza automáticamente las dependencias y el impacto de los cambios
+cuando se modifica código, especialmente funciones y clases.
+"""
+
+import ast
+import re
+import logging
+from typing import Dict, List, Any, Optional, Set, Tuple
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class DependencyAnalyzer:
+    """
+    Analiza dependencias y detecta el impacto de cambios en funciones/clases.
+    """
+    
+    def __init__(self, ast_index: List[Dict]):
+        self.ast_index = ast_index
+        self._build_dependency_graph()
+    
+    def _build_dependency_graph(self):
+        """Construye un grafo de dependencias del proyecto."""
+        self.dependency_graph = {}
+        self.reverse_dependency_graph = {}  # Quién depende de quién
+        
+        for definition in self.ast_index:
+            file_path = definition.get("file", "")
+            name = definition.get("name", "")
+            
+            if file_path not in self.dependency_graph:
+                self.dependency_graph[file_path] = {
+                    "functions": {},
+                    "classes": {},
+                    "imports": []
+                }
+            
+            def_type = definition.get("type", "")
+            if def_type == "function":
+                self.dependency_graph[file_path]["functions"][name] = definition
+            elif def_type == "class":
+                self.dependency_graph[file_path]["classes"][name] = definition
+            elif def_type == "import":
+                self.dependency_graph[file_path]["imports"].append(definition)
+    
+    def analyze_diff_dependencies(self, file_path: str, diff_blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analiza las dependencias afectadas por los cambios en diff_blocks.
+        
+        Args:
+            file_path: Archivo siendo modificado
+            diff_blocks: Bloques de cambios a aplicar
+            
+        Returns:
+            Análisis completo de dependencias y impacto
+        """
+        analysis = {
+            "modified_functions": [],
+            "modified_classes": [],
+            "signature_changes": [],
+            "affected_callers": [],
+            "files_to_review": [],
+            "breaking_changes": [],
+            "impact_level": "low",  # low, medium, high, critical
+            "recommendations": []
+        }
+        
+        try:
+            # Leer contenido actual del archivo
+            with open(file_path, 'r', encoding='utf-8') as f:
+                current_content = f.read()
+            
+            # Detectar qué funciones/clases se están modificando
+            modified_items = self._detect_modified_items(current_content, diff_blocks)
+            analysis["modified_functions"] = modified_items["functions"]
+            analysis["modified_classes"] = modified_items["classes"]
+            
+            # Analizar cambios de firma
+            signature_changes = self._detect_signature_changes(file_path, diff_blocks, current_content)
+            analysis["signature_changes"] = signature_changes
+            
+            # Encontrar callers afectados
+            affected_callers = self._find_affected_callers(file_path, modified_items["functions"] + modified_items["classes"])
+            analysis["affected_callers"] = affected_callers
+            
+            # Determinar archivos a revisar
+            files_to_review = list(set([caller["file"] for caller in affected_callers]))
+            analysis["files_to_review"] = files_to_review
+            
+            # Detectar breaking changes
+            breaking_changes = self._detect_breaking_changes(signature_changes, affected_callers)
+            analysis["breaking_changes"] = breaking_changes
+            
+            # Calcular nivel de impacto
+            impact_level = self._calculate_impact_level(modified_items, affected_callers, breaking_changes)
+            analysis["impact_level"] = impact_level
+            
+            # Generar recomendaciones
+            recommendations = self._generate_recommendations(analysis)
+            analysis["recommendations"] = recommendations
+            
+        except Exception as e:
+            logger.error(f"Error analyzing dependencies: {e}")
+            analysis["error"] = str(e)
+        
+        return analysis
+    
+    def _detect_modified_items(self, current_content: str, diff_blocks: List[Dict]) -> Dict[str, List[str]]:
+        """Detecta qué funciones y clases se están modificando."""
+        modified_items = {"functions": [], "classes": []}
+        
+        try:
+            current_tree = ast.parse(current_content)
+            
+            # Obtener todas las funciones y clases actuales con sus líneas
+            current_definitions = self._extract_definitions_with_lines(current_tree)
+            
+            # Para cada bloque de diff, verificar qué definiciones afecta
+            for block in diff_blocks:
+                start_line = block.get("start_line", 1)
+                end_line = block.get("end_line", start_line)
+                
+                for name, info in current_definitions.items():
+                    def_start = info["line_start"]
+                    def_end = info["line_end"]
+                    
+                    # Verificar si el diff overlaps con la definición
+                    if self._ranges_overlap(start_line, end_line, def_start, def_end):
+                        if info["type"] == "function":
+                            if name not in modified_items["functions"]:
+                                modified_items["functions"].append(name)
+                        elif info["type"] == "class":
+                            if name not in modified_items["classes"]:
+                                modified_items["classes"].append(name)
+        
+        except Exception as e:
+            logger.error(f"Error detecting modified items: {e}")
+        
+        return modified_items
+    
+    def _extract_definitions_with_lines(self, tree: ast.AST) -> Dict[str, Dict]:
+        """Extrae definiciones con sus números de línea."""
+        definitions = {}
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                definitions[node.name] = {
+                    "type": "function",
+                    "line_start": node.lineno,
+                    "line_end": getattr(node, 'end_lineno', node.lineno),
+                    "args": [arg.arg for arg in node.args.args] if hasattr(node.args, 'args') else []
+                }
+            elif isinstance(node, ast.ClassDef):
+                definitions[node.name] = {
+                    "type": "class",
+                    "line_start": node.lineno,
+                    "line_end": getattr(node, 'end_lineno', node.lineno)
+                }
+        
+        return definitions
+    
+    def _ranges_overlap(self, start1: int, end1: int, start2: int, end2: int) -> bool:
+        """Verifica si dos rangos de líneas se superponen."""
+        return not (end1 < start2 or end2 < start1)
+    
+    def _detect_signature_changes(self, file_path: str, diff_blocks: List[Dict], current_content: str) -> List[Dict]:
+        """Detecta cambios en firmas de funciones."""
+        signature_changes = []
+        
+        try:
+            # Simular los cambios para obtener el contenido modificado
+            modified_content = self._simulate_diff_changes(current_content, diff_blocks)
+            
+            # Parsear ambas versiones
+            current_tree = ast.parse(current_content)
+            modified_tree = ast.parse(modified_content)
+            
+            # Extraer firmas de funciones
+            current_signatures = self._extract_function_signatures(current_tree)
+            modified_signatures = self._extract_function_signatures(modified_tree)
+            
+            # Comparar firmas
+            for func_name in current_signatures:
+                if func_name in modified_signatures:
+                    current_sig = current_signatures[func_name]
+                    modified_sig = modified_signatures[func_name]
+                    
+                    if current_sig != modified_sig:
+                        change_type = self._classify_signature_change(current_sig, modified_sig)
+                        signature_changes.append({
+                            "function": func_name,
+                            "file": file_path,
+                            "old_signature": current_sig,
+                            "new_signature": modified_sig,
+                            "change_type": change_type,
+                            "is_breaking": change_type in ["removed_args", "changed_args", "removed_function"]
+                        })
+                elif func_name not in modified_signatures:
+                    # Función removida
+                    signature_changes.append({
+                        "function": func_name,
+                        "file": file_path,
+                        "old_signature": current_signatures[func_name],
+                        "new_signature": None,
+                        "change_type": "removed_function",
+                        "is_breaking": True
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error detecting signature changes: {e}")
+        
+        return signature_changes
+    
+    def _simulate_diff_changes(self, content: str, diff_blocks: List[Dict]) -> str:
+        """Simula la aplicación de diff blocks para obtener el contenido modificado."""
+        lines = content.splitlines()
+        
+        # Ordenar bloques por línea en orden reverso para evitar problemas de índice
+        sorted_blocks = sorted(diff_blocks, key=lambda b: b.get('start_line', 0), reverse=True)
+        
+        for block in sorted_blocks:
+            start_line = block.get('start_line', 1) - 1  # Convert to 0-indexed
+            search_content = block.get('search_content', '')
+            replace_content = block.get('replace_content', '')
+            
+            search_lines = search_content.splitlines()
+            replace_lines = replace_content.splitlines()
+            
+            if start_line < len(lines):
+                end_line = start_line + len(search_lines)
+                lines[start_line:end_line] = replace_lines
+        
+        return '\n'.join(lines)
+    
+    def _extract_function_signatures(self, tree: ast.AST) -> Dict[str, str]:
+        """Extrae las firmas de todas las funciones."""
+        signatures = {}
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                signature = self._build_function_signature(node)
+                signatures[node.name] = signature
+        
+        return signatures
+    
+    def _build_function_signature(self, node: ast.FunctionDef) -> str:
+        """Construye la firma de una función a partir del nodo AST."""
+        args = []
+        
+        # Argumentos posicionales
+        for arg in node.args.args:
+            args.append(arg.arg)
+        
+        # Argumentos con valores por defecto
+        defaults_offset = len(node.args.args) - len(node.args.defaults)
+        for i, default in enumerate(node.args.defaults):
+            arg_index = defaults_offset + i
+            if arg_index < len(node.args.args):
+                args[arg_index] += f"={ast.unparse(default) if hasattr(ast, 'unparse') else 'default'}"
+        
+        # *args
+        if node.args.vararg:
+            args.append(f"*{node.args.vararg.arg}")
+        
+        # **kwargs
+        if node.args.kwarg:
+            args.append(f"**{node.args.kwarg.arg}")
+        
+        return f"{node.name}({', '.join(args)})"
+    
+    def _classify_signature_change(self, old_sig: str, new_sig: str) -> str:
+        """Clasifica el tipo de cambio en la firma."""
+        old_args = self._extract_args_from_signature(old_sig)
+        new_args = self._extract_args_from_signature(new_sig)
+        
+        if len(new_args) < len(old_args):
+            return "removed_args"
+        elif len(new_args) > len(old_args):
+            return "added_args"
+        elif old_args != new_args:
+            return "changed_args"
+        else:
+            return "renamed_function"
+    
+    def _extract_args_from_signature(self, signature: str) -> List[str]:
+        """Extrae los argumentos de una firma de función."""
+        # Extraer argumentos entre paréntesis
+        match = re.search(r'\((.*)\)', signature)
+        if match:
+            args_str = match.group(1)
+            if args_str.strip():
+                return [arg.strip().split('=')[0] for arg in args_str.split(',')]
+        return []
+    
+    def _find_affected_callers(self, file_path: str, modified_items: List[str]) -> List[Dict]:
+        """Encuentra todos los callers de las funciones/clases modificadas."""
+        affected_callers = []
+        
+        try:
+            normalized_file_path = str(Path(file_path).resolve())
+        except (OSError, ValueError):
+            normalized_file_path = file_path
+        
+        for item_name in modified_items:
+            # Buscar en el índice AST todos los lugares donde se usa este item
+            for definition in self.ast_index:
+                try:
+                    def_file = str(Path(definition.get("file", "")).resolve())
+                except (OSError, ValueError):
+                    def_file = definition.get("file", "")
+                
+                # Solo buscar en archivos diferentes
+                if def_file != normalized_file_path:
+                    # Buscar referencias en la firma/código (análisis simplificado)
+                    signature = definition.get("signature", "")
+                    if item_name in signature:
+                        affected_callers.append({
+                            "caller_name": definition.get("name"),
+                            "caller_type": definition.get("type"),
+                            "file": definition.get("file"),
+                            "line": definition.get("line_start", definition.get("line")),
+                            "calls": item_name,
+                            "confidence": "medium"  # En un análisis real sería más sofisticado
+                        })
+        
+        return affected_callers
+    
+    def _detect_breaking_changes(self, signature_changes: List[Dict], affected_callers: List[Dict]) -> List[Dict]:
+        """Detecta breaking changes basado en cambios de firma y callers."""
+        breaking_changes = []
+        
+        for change in signature_changes:
+            if change.get("is_breaking", False):
+                # Encontrar callers específicos para esta función
+                function_callers = [caller for caller in affected_callers 
+                                  if caller.get("calls") == change["function"]]
+                
+                breaking_changes.append({
+                    "type": "signature_change",
+                    "function": change["function"],
+                    "change_type": change["change_type"],
+                    "affected_callers": len(function_callers),
+                    "files_affected": list(set([caller["file"] for caller in function_callers])),
+                    "severity": "high" if len(function_callers) > 3 else "medium"
+                })
+        
+        return breaking_changes
+    
+    def _calculate_impact_level(self, modified_items: Dict, affected_callers: List, breaking_changes: List) -> str:
+        """Calcula el nivel de impacto general."""
+        total_modified = len(modified_items["functions"]) + len(modified_items["classes"])
+        total_callers = len(affected_callers)
+        total_breaking = len(breaking_changes)
+        
+        if total_breaking > 0 and total_callers > 5:
+            return "critical"
+        elif total_breaking > 0 or total_callers > 10:
+            return "high"
+        elif total_callers > 3 or total_modified > 3:
+            return "medium"
+        else:
+            return "low"
+    
+    def _generate_recommendations(self, analysis: Dict) -> List[str]:
+        """Genera recomendaciones basadas en el análisis."""
+        recommendations = []
+        
+        impact_level = analysis["impact_level"]
+        breaking_changes = analysis["breaking_changes"]
+        files_to_review = analysis["files_to_review"]
+        
+        if impact_level == "critical":
+            recommendations.append("🚨 CRITICAL: This change has high impact with breaking changes. Consider:")
+            recommendations.append("   • Create a backup before applying")
+            recommendations.append("   • Update all affected files simultaneously")
+            recommendations.append("   • Run comprehensive tests after changes")
+        
+        elif impact_level == "high":
+            recommendations.append("⚠️  HIGH IMPACT: This change affects multiple files:")
+            
+        elif impact_level == "medium":
+            recommendations.append("📋 MEDIUM IMPACT: Review the following files:")
+        
+        else:
+            recommendations.append("✅ LOW IMPACT: Safe to apply with minimal review")
+        
+        if files_to_review:
+            recommendations.append(f"📁 Files to review: {', '.join(files_to_review[:5])}")
+            if len(files_to_review) > 5:
+                recommendations.append(f"   ...and {len(files_to_review) - 5} more files")
+        
+        if breaking_changes:
+            recommendations.append("💥 Breaking changes detected:")
+            for change in breaking_changes[:3]:  # Show top 3
+                recommendations.append(f"   • {change['function']}: {change['change_type']}")
+        
+        # Sugerencias específicas
+        if analysis["signature_changes"]:
+            recommendations.append("🔧 Consider: Use get_code_definition to verify all callers")
+        
+        if impact_level in ["high", "critical"]:
+            recommendations.append("🧪 Strongly recommended: Run tests after applying changes")
+        
+        return recommendations
+
+
+def enhance_apply_diff_with_dependencies(file_path: str, diff_blocks: List[Dict], 
+                                       ast_index: List[Dict]) -> Dict[str, Any]:
+    """
+    Función principal para integrar análisis de dependencias en apply_diff_tool.
+    
+    Args:
+        file_path: Archivo siendo modificado
+        diff_blocks: Bloques de cambios
+        ast_index: Índice AST del proyecto
+        
+    Returns:
+        Análisis de dependencias e impacto
+    """
+    try:
+        analyzer = DependencyAnalyzer(ast_index)
+        dependency_analysis = analyzer.analyze_diff_dependencies(file_path, diff_blocks)
+        
+        return {
+            "dependency_analysis": dependency_analysis,
+            "has_dependencies": len(dependency_analysis["affected_callers"]) > 0,
+            "impact_summary": {
+                "modified_items": len(dependency_analysis["modified_functions"]) + len(dependency_analysis["modified_classes"]),
+                "affected_files": len(dependency_analysis["files_to_review"]),
+                "breaking_changes": len(dependency_analysis["breaking_changes"]),
+                "impact_level": dependency_analysis["impact_level"]
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in dependency analysis: {e}")
+        return {
+            "dependency_analysis": {"error": str(e)},
+            "has_dependencies": False,
+            "impact_summary": {"error": str(e)}
+        }

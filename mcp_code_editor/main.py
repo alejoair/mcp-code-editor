@@ -45,7 +45,7 @@ mcp = FastMCP(
     • read_file_with_lines: Read files with line numbers and range filtering
     • delete_file: Delete files with optional backup creation
     • start_console_process: Start interactive console processes (npm, python, etc.)
-    • check_console: Get snapshot of console output from running processes
+     • check_console: Get snapshot of console output from running processes (requires wait_seconds parameter)
     • send_to_console: Send input to interactive console processes
     • list_console_processes: List and manage active console processes
     • terminate_console_process: Stop running console processes
@@ -60,17 +60,137 @@ mcp.project_state = ProjectState()
 # Register tools with the MCP server
 @mcp.tool
 async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
-    """Apply precise file modifications using structured diff blocks."""
+    """
+    Apply precise file modifications using structured diff blocks.
+    
+    Each block in the list must be a dictionary with the following structure:
+    {
+        "start_line": int,              # Required: Starting line number (1-indexed)
+        "end_line": int,                # Optional: Ending line number  
+        "search_content": str,          # Required: Exact content to find
+        "replace_content": str          # Required: Content to replace with
+    }
+    
+    Example:
+    [
+        {
+            "start_line": 10,
+            "end_line": 12,
+            "search_content": "def old_function():\n    return 'old'",
+            "replace_content": "def new_function():\n    return 'new'"
+        }
+    ]
+    
+    Args:
+        path: File path to modify
+        blocks: List of diff block dictionaries (see structure above)
+        ctx: MCP context (optional)
+        
+    Returns:
+        Dictionary with operation results and statistics
+        
+    Note: Content matching uses fuzzy whitespace matching but requires exact text.
+    """
+    # AST-powered pre-analysis if enabled
+    ast_warnings = []
+    ast_recommendations = []
+    dependency_analysis = {}
+    impact_summary = {}
+    
+    if ctx:
+        state = getattr(ctx.fastmcp, 'project_state', None)
+        if state and state.ast_enabled and hasattr(state, 'ast_index'):
+            try:
+                from mcp_code_editor.tools.ast_integration import enhance_apply_diff_with_ast
+                pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
+                
+                # Collect warnings and recommendations for the response
+                ast_warnings = pre_analysis.get("warnings", [])
+                ast_recommendations = pre_analysis.get("recommendations", [])
+                
+                # NUEVO: Análisis de dependencias automático
+                from mcp_code_editor.tools.dependency_analyzer import enhance_apply_diff_with_dependencies
+                dependency_result = enhance_apply_diff_with_dependencies(path, blocks, state.ast_index)
+                
+                dependency_analysis = dependency_result.get("dependency_analysis", {})
+                impact_summary = dependency_result.get("impact_summary", {})
+                
+                # Agregar información de dependencias a las advertencias
+                if dependency_analysis.get("breaking_changes"):
+                    for breaking_change in dependency_analysis["breaking_changes"]:
+                        ast_warnings.append({
+                            "type": "breaking_change",
+                            "severity": breaking_change.get("severity", "high"),
+                            "message": f"Breaking change in {breaking_change['function']}: {breaking_change['change_type']}",
+                            "affected_files": breaking_change.get("files_affected", []),
+                            "affected_callers": breaking_change.get("affected_callers", 0)
+                        })
+                
+                # Agregar recomendaciones de dependencias
+                if dependency_analysis.get("recommendations"):
+                    ast_recommendations.extend(dependency_analysis["recommendations"])
+                
+                # Check if we should proceed
+                if not pre_analysis.get("should_proceed", True):
+                    return {
+                        "success": False,
+                        "error": "AST_VALIDATION_FAILED",
+                        "message": "AST analysis detected issues that prevent applying this diff safely.",
+                        "ast_warnings": ast_warnings,
+                        "ast_recommendations": ast_recommendations,
+                        "suggested_action": "Review the warnings and modify the diff accordingly, or use get_code_definition to check dependencies first."
+                    }
+                    
+            except Exception as e:
+                ast_warnings.append({
+                    "type": "ast_analysis_error",
+                    "severity": "low", 
+                    "message": f"AST analysis failed: {str(e)}"
+                })
+                # Initialize empty dependency analysis on error
+                dependency_analysis = {}
+                impact_summary = {}
+    
+    # Apply the diff
     result = apply_diff(path, blocks)
     
-    # Auto-update AST if enabled and changes affect structure
-    if result.get("success") and ctx:
-        state = getattr(ctx.fastmcp, 'project_state', None)
-        if state and state.ast_enabled:
-            if has_structural_changes(blocks):
-                # Update AST index for the modified file
+    # Enhance result with AST information for LLM decision making
+    if result.get("success"):
+        # Update AST if needed
+        if ctx:
+            state = getattr(ctx.fastmcp, 'project_state', None)
+            if state and state.ast_enabled and has_structural_changes(blocks):
                 state.ast_index = update_file_ast_index(path, state.ast_index)
-                await ctx.info(f"AST index updated for {path}")
+        
+        # Add AST insights to successful result (ALWAYS when AST is enabled)
+        if ctx and getattr(ctx.fastmcp, 'project_state', None) and getattr(ctx.fastmcp.project_state, 'ast_enabled', False):
+            result["ast_warnings"] = ast_warnings
+            result["ast_recommendations"] = ast_recommendations
+            
+            # NUEVO: Agregar análisis de dependencias
+            if dependency_analysis:
+                result["dependency_analysis"] = dependency_analysis
+                result["impact_summary"] = impact_summary
+            
+            # Provide clear guidance to LLM with dependency information
+            impact_level = dependency_analysis.get("impact_level", "low")
+            files_to_review = dependency_analysis.get("files_to_review", [])
+            breaking_changes = dependency_analysis.get("breaking_changes", [])
+            
+            if breaking_changes and impact_level in ["critical", "high"]:
+                result["suggested_next_action"] = f"🚨 CRITICAL: Breaking changes detected affecting {len(files_to_review)} files. Review: {', '.join(files_to_review[:3])}{'...' if len(files_to_review) > 3 else ''}"
+            elif ast_warnings and any(w.get("severity") == "high" for w in ast_warnings):
+                result["suggested_next_action"] = "HIGH PRIORITY: Test the changes immediately as breaking changes were detected."
+            elif impact_level == "high" or (impact_level == "medium" and files_to_review):
+                result["suggested_next_action"] = f"📋 MEDIUM IMPACT: Review {len(files_to_review)} affected files: {', '.join(files_to_review[:2])}{'...' if len(files_to_review) > 2 else ''}"
+            elif ast_warnings and any(w.get("severity") == "medium" for w in ast_warnings):
+                result["suggested_next_action"] = "RECOMMENDED: Use get_code_definition to verify affected functions still work correctly."
+            elif files_to_review:
+                result["suggested_next_action"] = f"✅ LOW IMPACT: {len(files_to_review)} files may be affected, but changes appear safe."
+            elif ast_warnings:
+                result["suggested_next_action"] = "Changes applied successfully. AST analysis shows low risk."
+            else:
+                result["suggested_next_action"] = "Changes applied successfully. No issues detected."
     
     return result
 
@@ -80,9 +200,44 @@ def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
     return create_file(path, content, overwrite)
 
 @mcp.tool
-def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None) -> dict:
-    """Read a text file and return its content with line numbers."""
-    return read_file_with_lines(path, start_line, end_line)
+async def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None, ctx: Context = None) -> dict:
+    """Read a text file and return its content with line numbers, enhanced with AST info for Python files."""
+    result = read_file_with_lines(path, start_line, end_line)
+    
+    # Enhance Python files with AST information if available
+    if result.get("success") and path.endswith('.py') and ctx:
+        state = getattr(ctx.fastmcp, 'project_state', None)
+        if state and state.ast_enabled and hasattr(state, 'ast_index'):
+            # Find definitions in this file (normalize paths for comparison)
+            from pathlib import Path
+            try:
+                normalized_path = str(Path(path).resolve())
+                file_definitions = []
+                for d in state.ast_index:
+                    try:
+                        d_file = str(Path(d.get('file', '')).resolve()) if d.get('file') else ''
+                        if d_file == normalized_path:
+                            file_definitions.append(d)
+                    except (OSError, ValueError):
+                        # Fallback to direct string comparison if path resolution fails
+                        if d.get('file') == path:
+                            file_definitions.append(d)
+            except (OSError, ValueError):
+                # Fallback to direct string comparison
+                file_definitions = [d for d in state.ast_index if d.get('file') == path]
+            # Always add ast_info for Python files when AST is enabled, even if empty
+            result["ast_info"] = {
+                "definitions_found": len(file_definitions),
+                "functions": [d["name"] for d in file_definitions if d.get("type") == "function"],
+                "classes": [d["name"] for d in file_definitions if d.get("type") == "class"],
+                "imports": [d["name"] for d in file_definitions if d.get("type") == "import"][:10]  # Limit to first 10
+            }
+            if file_definitions:
+                result["suggested_next_action"] = f"This Python file contains {len(file_definitions)} definitions. Use get_code_definition to explore specific functions or classes."
+            else:
+                result["suggested_next_action"] = "This Python file has no definitions indexed. The file might be empty or contain only comments/docstrings."
+    
+    return result
 
 @mcp.tool
 def delete_file_tool(path: str, create_backup: bool = True) -> dict:
@@ -97,8 +252,8 @@ async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Conte
     # If setup was successful, store the state in the server
     if result.get("success"):
         # Store the project state in the server for later use
-        from tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
-        from tools.ast_analyzer import build_ast_index
+        from mcp_code_editor.tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
+        from mcp_code_editor.tools.ast_analyzer import build_ast_index
         from pathlib import Path
         from datetime import datetime
         
@@ -289,7 +444,12 @@ async def get_code_definition(
             }
         }
         
-        await ctx.info(f"Found {len(definitions)} definitions for '{identifier}'")
+        # Add actionable insights for LLM
+        if len(definitions) == 1:
+            def_info = definitions[0]
+            result["suggested_next_action"] = f"Found 1 {def_info['type']} '{identifier}' in {def_info['file']}. Use read_file_with_lines_tool to see the implementation or apply_diff_tool to modify it."
+        elif len(definitions) > 1:
+            result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'. Review each location before making changes to ensure you modify the correct one."
         
         return result
         
@@ -302,9 +462,6 @@ async def get_code_definition(
             "identifier": identifier
         }
 
-def test_new_function():
-    """This is a test function added via apply_diff."""
-    return "Hello from new function!"
 
 @mcp.tool
 async def index_library_tool(
@@ -507,6 +664,7 @@ async def start_console_process_tool(
 @mcp.tool
 async def check_console_tool(
     process_id: str,
+    wait_seconds: int,
     lines: int = 50,
     include_timestamps: bool = False,
     filter_type: str = "all",
@@ -517,10 +675,9 @@ async def check_console_tool(
     """
     Get a snapshot of console output from an interactive process.
     
-    Note: This function includes a 10-second delay before execution.
-    
     Args:
         process_id: ID of the process to check
+        wait_seconds: Number of seconds to wait before checking console (required)
         lines: Number of recent lines to retrieve
         include_timestamps: Whether to include timestamps in output
         filter_type: Filter output by type ("all", "stdout", "stderr", "input")
@@ -533,9 +690,9 @@ async def check_console_tool(
     import asyncio
     
     try:
-        # Wait 10 seconds before executing
-        await ctx.info(f"Waiting 10 seconds before checking console {process_id}...")
-        await asyncio.sleep(10)
+        # Wait specified seconds before executing
+        await ctx.info(f"Waiting {wait_seconds} seconds before checking console {process_id}...")
+        await asyncio.sleep(wait_seconds)
         
         result = check_console(process_id, lines, include_timestamps, 
                              filter_type, since_timestamp, raw_output)

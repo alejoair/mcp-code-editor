@@ -61,7 +61,37 @@ async def apply_diff_tool(
     blocks: List[Dict[str, Any]], 
     ctx: Context = None
 ) -> Dict[str, Any]:
-    """Apply precise file modifications using structured diff blocks."""
+    """
+    Apply precise file modifications using structured diff blocks.
+    
+    Each block in the list must be a dictionary with the following structure:
+    {
+        "start_line": int,              # Required: Starting line number (1-indexed)
+        "end_line": int,                # Optional: Ending line number  
+        "search_content": str,          # Required: Exact content to find
+        "replace_content": str          # Required: Content to replace with
+    }
+    
+    Example:
+    [
+        {
+            "start_line": 10,
+            "end_line": 12,
+            "search_content": "def old_function():\n    return 'old'",
+            "replace_content": "def new_function():\n    return 'new'"
+        }
+    ]
+    
+    Args:
+        path: File path to modify
+        blocks: List of diff block dictionaries (see structure above)
+        ctx: MCP context (optional)
+        
+    Returns:
+        Dictionary with operation results and statistics
+        
+    Note: Content matching uses fuzzy whitespace matching but requires exact text.
+    """
     result = apply_diff(path, blocks)
     
     # Auto-update AST if enabled and changes affect structure
@@ -482,6 +512,7 @@ async def start_console_process_tool(
 @mcp.tool
 async def check_console_tool(
     process_id: str,
+    wait_seconds: int,
     lines: int = 50,
     include_timestamps: bool = False,
     filter_type: str = "all",
@@ -489,13 +520,13 @@ async def check_console_tool(
     raw_output: bool = False,
     ctx: Context = None
 ) -> Dict[str, Any]:
-    """Get a snapshot of console output from an interactive process. Includes a 10-second delay before execution."""
+    """Get a snapshot of console output from an interactive process. Includes a configurable delay before execution."""
     import asyncio
     
     try:
-        # Wait 10 seconds before executing
-        await ctx.info(f"Waiting 10 seconds before checking console {process_id}...")
-        await asyncio.sleep(10)
+        # Wait specified seconds before executing
+        await ctx.info(f"Waiting {wait_seconds} seconds before checking console {process_id}...")
+        await asyncio.sleep(wait_seconds)
         
         result = check_console(process_id, lines, include_timestamps, 
                              filter_type, since_timestamp, raw_output)
