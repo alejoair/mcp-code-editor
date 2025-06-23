@@ -99,7 +99,7 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
         state = getattr(ctx.fastmcp, 'project_state', None)
         if state and state.ast_enabled and hasattr(state, 'ast_index'):
             try:
-                from .ast_integration import enhance_apply_diff_with_ast
+                from mcp_code_editor.tools.ast_integration import enhance_apply_diff_with_ast
                 pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
                 
                 # Collect warnings and recommendations for the response
@@ -135,18 +135,20 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
             if state and state.ast_enabled and has_structural_changes(blocks):
                 state.ast_index = update_file_ast_index(path, state.ast_index)
         
-        # Add AST insights to successful result
-        if ast_warnings or ast_recommendations:
+        # Add AST insights to successful result (ALWAYS when AST is enabled)
+        if ctx and getattr(ctx.fastmcp, 'project_state', None) and getattr(ctx.fastmcp.project_state, 'ast_enabled', False):
             result["ast_warnings"] = ast_warnings
             result["ast_recommendations"] = ast_recommendations
             
             # Provide clear guidance to LLM
-            if any(w["severity"] == "high" for w in ast_warnings):
+            if ast_warnings and any(w.get("severity") == "high" for w in ast_warnings):
                 result["suggested_next_action"] = "HIGH PRIORITY: Test the changes immediately as breaking changes were detected."
-            elif any(w["severity"] == "medium" for w in ast_warnings):
+            elif ast_warnings and any(w.get("severity") == "medium" for w in ast_warnings):
                 result["suggested_next_action"] = "RECOMMENDED: Use get_code_definition to verify affected functions still work correctly."
-            else:
+            elif ast_warnings:
                 result["suggested_next_action"] = "Changes applied successfully. AST analysis shows low risk."
+            else:
+                result["suggested_next_action"] = "Changes applied successfully. No AST issues detected."
     
     return result
 
@@ -164,16 +166,34 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     if result.get("success") and path.endswith('.py') and ctx:
         state = getattr(ctx.fastmcp, 'project_state', None)
         if state and state.ast_enabled and hasattr(state, 'ast_index'):
-            # Find definitions in this file
-            file_definitions = [d for d in state.ast_index if d.get('file') == path]
+            # Find definitions in this file (normalize paths for comparison)
+            from pathlib import Path
+            try:
+                normalized_path = str(Path(path).resolve())
+                file_definitions = []
+                for d in state.ast_index:
+                    try:
+                        d_file = str(Path(d.get('file', '')).resolve()) if d.get('file') else ''
+                        if d_file == normalized_path:
+                            file_definitions.append(d)
+                    except (OSError, ValueError):
+                        # Fallback to direct string comparison if path resolution fails
+                        if d.get('file') == path:
+                            file_definitions.append(d)
+            except (OSError, ValueError):
+                # Fallback to direct string comparison
+                file_definitions = [d for d in state.ast_index if d.get('file') == path]
+            # Always add ast_info for Python files when AST is enabled, even if empty
+            result["ast_info"] = {
+                "definitions_found": len(file_definitions),
+                "functions": [d["name"] for d in file_definitions if d.get("type") == "function"],
+                "classes": [d["name"] for d in file_definitions if d.get("type") == "class"],
+                "imports": [d["name"] for d in file_definitions if d.get("type") == "import"][:10]  # Limit to first 10
+            }
             if file_definitions:
-                result["ast_info"] = {
-                    "definitions_found": len(file_definitions),
-                    "functions": [d["name"] for d in file_definitions if d.get("type") == "function"],
-                    "classes": [d["name"] for d in file_definitions if d.get("type") == "class"],
-                    "imports": [d["name"] for d in file_definitions if d.get("type") == "import"][:10]  # Limit to first 10
-                }
                 result["suggested_next_action"] = f"This Python file contains {len(file_definitions)} definitions. Use get_code_definition to explore specific functions or classes."
+            else:
+                result["suggested_next_action"] = "This Python file has no definitions indexed. The file might be empty or contain only comments/docstrings."
     
     return result
 
@@ -190,8 +210,8 @@ async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Conte
     # If setup was successful, store the state in the server
     if result.get("success"):
         # Store the project state in the server for later use
-        from tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
-        from tools.ast_analyzer import build_ast_index
+        from mcp_code_editor.tools.project_tools import ProjectState, GitIgnoreParser, build_file_tree
+        from mcp_code_editor.tools.ast_analyzer import build_ast_index
         from pathlib import Path
         from datetime import datetime
         
@@ -383,20 +403,11 @@ async def get_code_definition(
         }
         
         # Add actionable insights for LLM
-        if definitions:
-            if len(definitions) == 1:
-                def_info = definitions[0]
-                result["suggested_next_action"] = f"Found 1 {def_info['type']} '{identifier}' in {def_info['file']}. Use read_file_with_lines_tool to see the implementation or apply_diff_tool to modify it."
-            else:
-                result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'. Review each location before making changes to ensure you modify the correct one."
-        else:
-            result = {
-                "success": True,
-                "found": False,
-                "identifier": identifier,
-                "total_matches": 0,
-                "suggested_next_action": f"No definitions found for '{identifier}'. Check spelling or search with definition_type='any' for broader results."
-            }
+        if len(definitions) == 1:
+            def_info = definitions[0]
+            result["suggested_next_action"] = f"Found 1 {def_info['type']} '{identifier}' in {def_info['file']}. Use read_file_with_lines_tool to see the implementation or apply_diff_tool to modify it."
+        elif len(definitions) > 1:
+            result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'. Review each location before making changes to ensure you modify the correct one."
         
         return result
         

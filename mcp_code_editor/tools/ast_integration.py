@@ -153,8 +153,17 @@ class ASTDiffAnalyzer:
         
         for item in changed_items:
             # Find references in the AST index
+            from pathlib import Path
+            try:
+                normalized_file_path = str(Path(file_path).resolve())
+            except (OSError, ValueError):
+                normalized_file_path = file_path
             for definition in self.ast_index:
-                if definition.get("file") != file_path:  # Different file
+                try:
+                    def_file = str(Path(definition.get("file", "")).resolve()) if definition.get("file") else ""
+                except (OSError, ValueError):
+                    def_file = definition.get("file", "")
+                if def_file != normalized_file_path:  # Different file
                     # This is a simplified check - in practice, we'd need more sophisticated analysis
                     if item in definition.get("signature", ""):
                         affected.append({
