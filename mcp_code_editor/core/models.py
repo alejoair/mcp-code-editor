@@ -29,6 +29,7 @@ class DiffBlock(BaseModel):
         
         Args:
             block_dict: Dictionary containing block data
+            strict_mode: If True, applies stricter validation rules
             
         Returns:
             DiffBlock instance

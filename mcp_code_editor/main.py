@@ -11,6 +11,7 @@ This modular server is designed to be easily extensible.
 """
 
 import logging
+from typing import List, Dict
 from fastmcp import FastMCP
 
 
@@ -33,24 +34,38 @@ from fastmcp import Context
 mcp = FastMCP(
     name="MCPCodeEditor",
     instructions="""
-    MCP Code Editor provides powerful tools for code editing workflows:
+    MCP Code Editor v0.1.12 - Advanced code editing tools with intelligent AST analysis:
     
-    • setup_code_editor: Analyze project structure and setup intelligent file management  
+    🔧 PROJECT MANAGEMENT:
+    • setup_code_editor: Analyze project structure, build AST index, and setup intelligent file management
     • project_files: Get project files using cached setup with filtering options
-    • get_code_definition: Get definitions of functions, classes, variables from code
+    
+    🔍 CODE ANALYSIS (AST-powered):
+    • get_code_definition: Find definitions AND usage locations of functions/classes/variables
+      - Shows where items are defined and where they're used throughout the codebase
+      - Includes usage context, confidence scores, and impact analysis
+      - Essential for refactoring and dependency analysis
+    • read_file_with_lines: Read files with line numbers + AST metadata for Python files
+      - Shows function/class counts and suggests next actions
+    
+    📚 LIBRARY INTEGRATION:
     • index_library: Index external Python libraries for code analysis
     • search_library: Search definitions within indexed libraries
-    • apply_diff: Make precise file modifications using structured diff blocks
+    
+    ✏️ FILE OPERATIONS:
+    • apply_diff: Make precise file modifications with automatic dependency impact analysis
+      - Detects breaking changes, affected callers, and provides safety recommendations
     • create_file: Create new files with content and backup support
-    • read_file_with_lines: Read files with line numbers and range filtering
     • delete_file: Delete files with optional backup creation
+    
+    🖥️ CONSOLE INTEGRATION:
     • start_console_process: Start interactive console processes (npm, python, etc.)
-     • check_console: Get snapshot of console output from running processes (requires wait_seconds parameter)
+    • check_console: Get snapshot of console output (requires wait_seconds parameter)
     • send_to_console: Send input to interactive console processes
     • list_console_processes: List and manage active console processes
     • terminate_console_process: Stop running console processes
     
-    Perfect for automated code editing, refactoring, file management, and interactive development tasks.
+    Perfect for automated code editing, intelligent refactoring, dependency analysis, and interactive development.
     """
 )
 
@@ -61,7 +76,13 @@ mcp.project_state = ProjectState()
 @mcp.tool
 async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     """
-    Apply precise file modifications using structured diff blocks.
+    ✏️ INTELLIGENT FILE MODIFICATION: Apply precise changes with automatic dependency analysis.
+    
+    This tool combines precise diff application with advanced AST analysis to:
+    • Detect breaking changes before they happen
+    • Identify affected functions and callers automatically  
+    • Provide safety recommendations and impact warnings
+    • Suggest files to review after modifications
     
     Each block in the list must be a dictionary with the following structure:
     {
@@ -76,8 +97,8 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
         {
             "start_line": 10,
             "end_line": 12,
-            "search_content": "def old_function():\n    return 'old'",
-            "replace_content": "def new_function():\n    return 'new'"
+            "search_content": "def calculate_total(items, tax_rate):",
+            "replace_content": "def calculate_total(items):"
         }
     ]
     
@@ -87,7 +108,11 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
         ctx: MCP context (optional)
         
     Returns:
-        Dictionary with operation results and statistics
+        Dictionary with operation results, dependency analysis, and safety recommendations:
+        - success: Whether the operation completed
+        - ast_warnings: List of potential issues detected
+        - dependency_analysis: Impact analysis including affected callers
+        - suggested_next_action: Contextual guidance based on impact level
         
     Note: Content matching uses fuzzy whitespace matching but requires exact text.
     """
@@ -97,9 +122,15 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     dependency_analysis = {}
     impact_summary = {}
     
+    # Get state from context or directly from mcp server
+    state = None
     if ctx:
-        state = getattr(ctx.fastmcp, 'project_state', None)
-        if state and state.ast_enabled and hasattr(state, 'ast_index'):
+        state = getattr(mcp, 'project_state', None)
+    else:
+        # Fallback: try to get state directly from mcp server
+        state = getattr(mcp, 'project_state', None)
+    
+    if state and state.ast_enabled and hasattr(state, 'ast_index'):
             try:
                 from mcp_code_editor.tools.ast_integration import enhance_apply_diff_with_ast
                 pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
@@ -158,14 +189,15 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     if result.get("success"):
         # Update AST if needed
         if ctx:
-            state = getattr(ctx.fastmcp, 'project_state', None)
+            state = getattr(mcp, 'project_state', None)
             if state and state.ast_enabled and has_structural_changes(blocks):
                 state.ast_index = update_file_ast_index(path, state.ast_index)
         
         # Add AST insights to successful result (ALWAYS when AST is enabled)
-        if ctx and getattr(ctx.fastmcp, 'project_state', None) and getattr(ctx.fastmcp.project_state, 'ast_enabled', False):
+        if ctx and getattr(mcp, 'project_state', None) and getattr(mcp.project_state, 'ast_enabled', False):
             result["ast_warnings"] = ast_warnings
             result["ast_recommendations"] = ast_recommendations
+            result["ast_enabled"] = True  # Confirm AST is working
             
             # NUEVO: Agregar análisis de dependencias
             if dependency_analysis:
@@ -201,30 +233,64 @@ def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
 
 @mcp.tool
 async def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None, ctx: Context = None) -> dict:
-    """Read a text file and return its content with line numbers, enhanced with AST info for Python files."""
+    """
+    📝 Read files with line numbers + intelligent AST analysis for Python files.
+    
+    For Python files, automatically provides:
+    • Function and class counts from AST analysis
+    • Import summaries and definitions overview
+    • Contextual suggestions for next actions
+    • Enhanced metadata for code navigation
+    
+    Args:
+        path: File path to read
+        start_line: Optional starting line number (1-indexed)
+        end_line: Optional ending line number (inclusive)
+        
+    Returns:
+        File content with line numbers, plus ast_info and suggested_next_action for Python files
+    """
     result = read_file_with_lines(path, start_line, end_line)
     
     # Enhance Python files with AST information if available
     if result.get("success") and path.endswith('.py') and ctx:
-        state = getattr(ctx.fastmcp, 'project_state', None)
+        state = getattr(mcp, 'project_state', None)
+        # Enhanced AST integration for Python files
         if state and state.ast_enabled and hasattr(state, 'ast_index'):
-            # Find definitions in this file (normalize paths for comparison)
+            # Find definitions in this file with multiple fallback strategies
             from pathlib import Path
+            file_definitions = []
+            
+            # Strategy 1: Try normalized absolute paths (convert to forward slashes)
             try:
-                normalized_path = str(Path(path).resolve())
-                file_definitions = []
+                normalized_path = str(Path(path).resolve()).replace('\\', '/')
                 for d in state.ast_index:
                     try:
-                        d_file = str(Path(d.get('file', '')).resolve()) if d.get('file') else ''
+                        d_file = str(Path(d.get('file', '')).resolve()).replace('\\', '/') if d.get('file') else ''
                         if d_file == normalized_path:
                             file_definitions.append(d)
                     except (OSError, ValueError):
-                        # Fallback to direct string comparison if path resolution fails
-                        if d.get('file') == path:
-                            file_definitions.append(d)
+                        pass
             except (OSError, ValueError):
-                # Fallback to direct string comparison
+                pass
+            
+            # Strategy 2: Direct string comparison if no matches
+            if not file_definitions:
                 file_definitions = [d for d in state.ast_index if d.get('file') == path]
+            
+            # Strategy 3: Compare by filename only if still no matches
+            if not file_definitions:
+                try:
+                    filename = Path(path).name
+                    for d in state.ast_index:
+                        try:
+                            d_filename = Path(d.get('file', '')).name if d.get('file') else ''
+                            if d_filename == filename:
+                                file_definitions.append(d)
+                        except (OSError, ValueError):
+                            pass
+                except (OSError, ValueError):
+                    pass
             # Always add ast_info for Python files when AST is enabled, even if empty
             result["ast_info"] = {
                 "definitions_found": len(file_definitions),
@@ -285,8 +351,8 @@ async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Conte
             state.ast_enabled = False
             await ctx.info(f"Project setup complete: {state.total_files} files indexed (AST disabled)")
         
-        # Store in server context
-        ctx.fastmcp.project_state = state
+        # Store in server instance (persists across all tool calls)
+        mcp.project_state = state
     
     return result
 
@@ -300,7 +366,7 @@ async def project_files_tool(
     """Get project files using cached setup with filtering options."""
     try:
         # Get the project state from server context
-        state = ctx.fastmcp.project_state
+        state = getattr(mcp, 'project_state', None)
         
         if not hasattr(state, 'setup_complete') or not state.setup_complete:
             return {
@@ -324,6 +390,91 @@ async def project_files_tool(
             "message": str(e)
         }
 
+def _find_identifier_usage(identifier: str, ast_index: List[Dict], definition_files: List[str]) -> List[Dict]:
+    """
+    Encuentra dónde se usa un identificador en el código.
+    
+    Args:
+        identifier: Nombre del identificador a buscar
+        ast_index: Índice AST completo del proyecto
+        definition_files: Archivos donde se define el identificador (para excluir)
+        
+    Returns:
+        Lista de ubicaciones donde se usa el identificador
+    """
+    usage_locations = []
+    
+    # Normalizar archivos de definición para comparación
+    from pathlib import Path
+    normalized_def_files = set()
+    for def_file in definition_files:
+        try:
+            normalized_def_files.add(str(Path(def_file).resolve()).replace('\\', '/'))
+        except (OSError, ValueError):
+            normalized_def_files.add(def_file)
+    
+    # Buscar usos en todo el AST index
+    for definition in ast_index:
+        def_file = definition.get("file", "")
+        
+        # Normalizar archivo actual
+        try:
+            normalized_file = str(Path(def_file).resolve()).replace('\\', '/')
+        except (OSError, ValueError):
+            normalized_file = def_file
+        
+        # Skip archivos donde está definido el identificador
+        if normalized_file in normalized_def_files:
+            continue
+        
+        # Buscar referencias en diferentes tipos de definiciones
+        def_type = definition.get("type", "")
+        def_name = definition.get("name", "")
+        signature = definition.get("signature", "")
+        
+        # Análisis básico: buscar el identificador en signatures y contenido
+        found_usage = False
+        usage_context = ""
+        
+        if def_type == "function":
+            # Buscar en la firma de la función (parámetros, llamadas)
+            if identifier in signature and def_name != identifier:
+                found_usage = True
+                usage_context = f"Used in function signature: {signature}"
+        
+        elif def_type == "class":
+            # Buscar en métodos de la clase
+            methods = definition.get("methods", [])
+            for method in methods:
+                method_info = method if isinstance(method, dict) else {"name": str(method)}
+                if identifier in str(method_info):
+                    found_usage = True
+                    usage_context = f"Used in class {def_name} method {method_info.get('name', 'unknown')}"
+                    break
+        
+        elif def_type == "import":
+            # Buscar si importa el identificador
+            module = definition.get("module", "")
+            from_name = definition.get("from_name", "")
+            if identifier in module or identifier in from_name:
+                found_usage = True
+                usage_context = f"Imported: {from_name or module}"
+        
+        # Si encontramos uso, agregarlo a la lista
+        if found_usage:
+            usage_locations.append({
+                "file": def_file,
+                "line": definition.get("line_start", definition.get("line")),
+                "context_name": def_name,
+                "context_type": def_type,
+                "usage_context": usage_context,
+                "confidence": "medium"  # Análisis básico = confianza media
+            })
+    
+    # Limitar resultados para evitar spam
+    return usage_locations[:20]  # Top 20 usos
+
+
 @mcp.tool
 async def get_code_definition(
     identifier: str,
@@ -333,20 +484,45 @@ async def get_code_definition(
     ctx: Context = None
 ) -> dict:
     """
-    Get definitions of functions, classes, variables, and imports from the project.
+    🔍 ADVANCED CODE ANALYSIS: Find definitions AND usage locations of any identifier.
+    
+    This tool provides comprehensive analysis of code elements including:
+    - WHERE items are defined (functions, classes, variables, imports)
+    - WHERE and HOW they are used throughout the codebase  
+    - Usage context and confidence scoring
+    - Impact analysis for refactoring decisions
+    
+    Essential for:
+    • Understanding code dependencies before making changes
+    • Finding all locations that will be affected by modifications
+    • Refactoring with confidence
+    • Code exploration and navigation
     
     Args:
-        identifier: Name of function/class/variable to find
-        context_file: Optional file context for prioritizing results
-        definition_type: Filter by type ("function", "class", "variable", "import", "any")
-        include_usage: Whether to include usage examples in the project
+        identifier: Name of function/class/variable to find (e.g., "calculate_total")
+        context_file: Optional file path to prioritize results from specific file
+        definition_type: Filter by type - "function", "class", "variable", "import", or "any"
+        include_usage: Set to True to always include usage analysis (default: auto-enabled when definitions found)
         
     Returns:
-        Dictionary with found definitions and metadata
+        Dictionary containing:
+        - definitions: List of where the identifier is defined
+        - usage_locations: List of where the identifier is used/called  
+        - total_usages: Count of usage locations
+        - suggested_next_action: Contextual guidance for next steps
+        - Detailed metadata for each definition and usage
+        
+    Example Response:
+        {
+            "definitions": [{"name": "calculate_total", "type": "function", "file": "calc.py", ...}],
+            "usage_locations": [{"file": "order.py", "context": "Called in process_order", ...}],
+            "total_usages": 3,
+            "suggested_next_action": "Found 1 function 'calculate_total' in calc.py. Used in 3 locations..."
+        }
     """
     try:
-        # Get the project state from server context
-        state = getattr(ctx.fastmcp, 'project_state', None)
+        # Get the project state from server instance
+        state = getattr(mcp, 'project_state', None)
         
         if not state or not state.setup_complete:
             return {
@@ -371,14 +547,23 @@ async def get_code_definition(
         )
         
         if not matches:
+            # No definitions found, but still search for usages if requested
+            usage_locations = []
+            if include_usage:
+                usage_locations = _find_identifier_usage(identifier, state.ast_index, [])
+            
             return {
                 "success": True,
                 "found": False,
                 "message": f"No definitions found for '{identifier}'",
                 "identifier": identifier,
+                "usage_locations": usage_locations,
+                "total_usages": len(usage_locations),
+                "suggested_next_action": f"No definitions found for '{identifier}'. Found {len(usage_locations)} potential usages." if usage_locations else f"No definitions or usages found for '{identifier}'. Check spelling or search with definition_type='any' for broader results.",
                 "search_criteria": {
                     "type": definition_type,
-                    "context_file": context_file
+                    "context_file": context_file,
+                    "include_usage": include_usage
                 }
             }
         
@@ -432,24 +617,36 @@ async def get_code_definition(
             
             definitions.append(definition)
         
+        # NUEVO: Buscar usos/referencias del identificador si se solicita o hay definiciones
+        usage_locations = []
+        if include_usage or definitions:
+            usage_locations = _find_identifier_usage(identifier, state.ast_index, [d["file"] for d in definitions])
+        
         result = {
             "success": True,
             "found": True,
             "identifier": identifier,
             "total_matches": len(matches),
             "definitions": definitions,
+            "usage_locations": usage_locations,
+            "total_usages": len(usage_locations),
             "search_criteria": {
                 "type": definition_type,
-                "context_file": context_file
+                "context_file": context_file,
+                "include_usage": include_usage
             }
         }
         
-        # Add actionable insights for LLM
+        # Add actionable insights for LLM with usage information
+        usage_summary = f" Used in {len(usage_locations)} locations." if usage_locations else " No usages found."
+        
         if len(definitions) == 1:
             def_info = definitions[0]
-            result["suggested_next_action"] = f"Found 1 {def_info['type']} '{identifier}' in {def_info['file']}. Use read_file_with_lines_tool to see the implementation or apply_diff_tool to modify it."
+            result["suggested_next_action"] = f"Found 1 {def_info['type']} '{identifier}' in {def_info['file']}.{usage_summary} Use read_file_with_lines_tool to see the implementation or apply_diff_tool to modify it."
         elif len(definitions) > 1:
-            result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'. Review each location before making changes to ensure you modify the correct one."
+            result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'.{usage_summary} Review each location before making changes to ensure you modify the correct one."
+        
+        # All processing complete
         
         return result
         

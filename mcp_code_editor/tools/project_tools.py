@@ -214,6 +214,7 @@ def setup_code_editor(path: str) -> Dict[str, Any]:
         return {
             "success": True,
             "message": f"Successfully setup code editor for project: {path}",
+            "mcp_version": "mcp-code-editor v0.1.12",
             "project_root": str(project_path),
             "project_type": project_type,
             "gitignore_found": gitignore_path.exists(),
