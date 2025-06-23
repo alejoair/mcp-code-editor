@@ -26,13 +26,13 @@ classifiers = [
 ]
 keywords = ["mcp", "code-editor", "fastmcp", "development-tools"]
 dependencies = [
-    "fastmcp>=0.1.0",
+    "fastmcp>=2.8.0",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/mcp-code-editor/mcp-code-editor"
-"Bug Reports" = "https://github.com/mcp-code-editor/mcp-code-editor/issues"
-"Source" = "https://github.com/mcp-code-editor/mcp-code-editor"
+"Homepage" = "https://github.com/alejoair/mcp-code-editor"
+"Bug Reports" = "https://github.com/alejoair/mcp-code-editor/issues"
+"Source" = "https://github.com/alejoair/mcp-code-editor"
 
 [project.scripts]
 mcp-code-editor = "mcp_code_editor.server:main"
