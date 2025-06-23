@@ -45,7 +45,7 @@ mcp = FastMCP(
     • read_file_with_lines: Read files with line numbers and range filtering
     • delete_file: Delete files with optional backup creation
     • start_console_process: Start interactive console processes (npm, python, etc.)
-    • check_console: Get snapshot of console output from running processes
+     • check_console: Get snapshot of console output from running processes (requires wait_seconds parameter)
     • send_to_console: Send input to interactive console processes
     • list_console_processes: List and manage active console processes
     • terminate_console_process: Stop running console processes
@@ -507,6 +507,7 @@ async def start_console_process_tool(
 @mcp.tool
 async def check_console_tool(
     process_id: str,
+    wait_seconds: int,
     lines: int = 50,
     include_timestamps: bool = False,
     filter_type: str = "all",
@@ -517,10 +518,9 @@ async def check_console_tool(
     """
     Get a snapshot of console output from an interactive process.
     
-    Note: This function includes a 10-second delay before execution.
-    
     Args:
         process_id: ID of the process to check
+        wait_seconds: Number of seconds to wait before checking console (required)
         lines: Number of recent lines to retrieve
         include_timestamps: Whether to include timestamps in output
         filter_type: Filter output by type ("all", "stdout", "stderr", "input")
@@ -533,9 +533,9 @@ async def check_console_tool(
     import asyncio
     
     try:
-        # Wait 10 seconds before executing
-        await ctx.info(f"Waiting 10 seconds before checking console {process_id}...")
-        await asyncio.sleep(10)
+        # Wait specified seconds before executing
+        await ctx.info(f"Waiting {wait_seconds} seconds before checking console {process_id}...")
+        await asyncio.sleep(wait_seconds)
         
         result = check_console(process_id, lines, include_timestamps, 
                              filter_type, since_timestamp, raw_output)

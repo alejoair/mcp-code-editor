@@ -482,6 +482,7 @@ async def start_console_process_tool(
 @mcp.tool
 async def check_console_tool(
     process_id: str,
+    wait_seconds: int,
     lines: int = 50,
     include_timestamps: bool = False,
     filter_type: str = "all",
@@ -489,13 +490,13 @@ async def check_console_tool(
     raw_output: bool = False,
     ctx: Context = None
 ) -> Dict[str, Any]:
-    """Get a snapshot of console output from an interactive process. Includes a 10-second delay before execution."""
+    """Get a snapshot of console output from an interactive process. Includes a configurable delay before execution."""
     import asyncio
     
     try:
-        # Wait 10 seconds before executing
-        await ctx.info(f"Waiting 10 seconds before checking console {process_id}...")
-        await asyncio.sleep(10)
+        # Wait specified seconds before executing
+        await ctx.info(f"Waiting {wait_seconds} seconds before checking console {process_id}...")
+        await asyncio.sleep(wait_seconds)
         
         result = check_console(process_id, lines, include_timestamps, 
                              filter_type, since_timestamp, raw_output)
