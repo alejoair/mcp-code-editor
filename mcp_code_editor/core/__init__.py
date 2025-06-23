@@ -2,4 +2,4 @@
 
 from .models import DiffBlock, DiffBuilder, FileModifier
 
-__all__ = ['DiffBlock', 'DiffBuilder', 'FileModifier']
+__all__ = ['FileModifier', 'DiffBlock', 'DiffBuilder']
