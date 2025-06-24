@@ -13,6 +13,7 @@ This modular server is designed to be easily extensible.
 import logging
 from typing import List, Dict
 from fastmcp import FastMCP
+from pathlib import Path
 
 
 from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines, delete_file,
@@ -161,16 +162,28 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                 if dependency_analysis.get("recommendations"):
                     ast_recommendations.extend(dependency_analysis["recommendations"])
                 
-                # Check if we should proceed
-                if not pre_analysis.get("should_proceed", True):
+                # Check if we should proceed - solo bloquear errores de sintaxis
+                should_proceed = pre_analysis.get("should_proceed", True)
+                ast_analysis = pre_analysis.get("ast_analysis", {})
+                error_type = ast_analysis.get("error_type")
+                
+                # Solo bloquear errores de sintaxis, no errores de análisis
+                if not should_proceed and error_type == "syntax":
                     return {
                         "success": False,
-                        "error": "AST_VALIDATION_FAILED",
-                        "message": "AST analysis detected issues that prevent applying this diff safely.",
+                        "error": "SYNTAX_ERROR",
+                        "message": f"Syntax error in modified code: {ast_analysis.get('error', 'Unknown syntax error')}",
                         "ast_warnings": ast_warnings,
                         "ast_recommendations": ast_recommendations,
-                        "suggested_action": "Review the warnings and modify the diff accordingly, or use get_code_definition to check dependencies first."
+                        "suggested_action": "Fix the syntax error before applying the diff."
                     }
+                elif not should_proceed:
+                    # Para otros tipos de problemas, agregar warning pero continuar
+                    ast_warnings.append({
+                        "type": "analysis_concern", 
+                        "severity": "medium",
+                        "message": f"Analysis detected issues: {ast_analysis.get('error', 'Unknown issue')}"
+                    })
                     
             except Exception as e:
                 ast_warnings.append({
@@ -229,7 +242,31 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
 @mcp.tool 
 def create_file_tool(path: str, content: str, overwrite: bool = False) -> dict:
     """Create a new file with the specified content."""
-    return create_file(path, content, overwrite)
+    result = create_file(path, content, overwrite)
+    
+    # NUEVO: Actualizar AST automáticamente para archivos Python
+    if result.get("success") and path.endswith(".py"):
+        try:
+            state = getattr(mcp, 'project_state', None)
+            if state and state.ast_enabled and hasattr(state, 'ast_index'):
+                from mcp_code_editor.tools.ast_analyzer import ASTAnalyzer
+                analyzer = ASTAnalyzer()
+                file_analysis = analyzer.analyze_file(Path(path))
+                
+                # Agregar nuevas definiciones al índice
+                if file_analysis and isinstance(file_analysis, list):
+                    state.ast_index.extend(file_analysis)
+                    result["ast_updated"] = True
+                    result["new_definitions"] = len(file_analysis)
+                    logger.info(f"Updated AST index with {len(file_analysis)} new definitions from {path}")
+                else:
+                    result["ast_updated"] = False
+                    result["new_definitions"] = 0
+        except Exception as e:
+            logger.warning(f"Failed to update AST for {path}: {e}")
+            result["ast_update_error"] = str(e)
+    
+    return result
 
 @mcp.tool
 async def read_file_with_lines_tool(path: str, start_line: int = None, end_line: int = None, ctx: Context = None) -> dict:
@@ -306,9 +343,80 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     return result
 
 @mcp.tool
-def delete_file_tool(path: str, create_backup: bool = True) -> dict:
-    """Delete a file with optional backup creation."""
-    return delete_file(path, create_backup)
+def delete_file_tool(path: str, create_backup: bool = False) -> dict:
+    """Delete a file with automatic dependency analysis and warnings."""
+    
+    # NUEVO: Análisis de dependencias antes de eliminar
+    dependency_warnings = []
+    affected_files = []
+    definitions_lost = []
+    
+    if path.endswith(".py"):
+        try:
+            state = getattr(mcp, 'project_state', None)
+            if state and state.ast_enabled and hasattr(state, 'ast_index'):
+                from mcp_code_editor.tools.dependency_analyzer import DependencyAnalyzer
+                
+                # Encontrar definiciones en el archivo a eliminar
+                file_definitions = [d for d in state.ast_index if d.get('file') == path]
+                definitions_lost = [d.get('name', 'unknown') for d in file_definitions]
+                
+                if file_definitions:
+                    analyzer = DependencyAnalyzer(state.ast_index)
+                    
+                    # Analizar cada definición que se perderá
+                    for definition in file_definitions:
+                        def_name = definition.get('name', '')
+                        if def_name:
+                            # Buscar qué archivos usan esta definición
+                            callers = analyzer._find_affected_callers(path, [def_name])
+                            
+                            for caller in callers:
+                                caller_file = caller.get('file', '')
+                                if caller_file and caller_file not in affected_files:
+                                    affected_files.append(caller_file)
+                                
+                                dependency_warnings.append({
+                                    "type": "lost_definition",
+                                    "severity": "high",
+                                    "definition": def_name,
+                                    "definition_type": definition.get('type', 'unknown'),
+                                    "used_in": caller_file,
+                                    "caller": caller.get('caller_name', 'unknown'),
+                                    "message": f"Definition '{def_name}' used in {caller_file} will be lost"
+                                })
+        except Exception as e:
+            logger.warning(f"Failed to analyze dependencies for {path}: {e}")
+            dependency_warnings.append({
+                "type": "analysis_error",
+                "severity": "medium", 
+                "message": f"Could not analyze dependencies: {str(e)}"
+            })
+    
+    # Ejecutar eliminación
+    result = delete_file(path, create_backup)
+    
+    # Agregar análisis de dependencias al resultado
+    if result.get("success"):
+        result["dependency_warnings"] = dependency_warnings
+        result["affected_files"] = affected_files
+        result["definitions_lost"] = definitions_lost
+        result["breaking_change_risk"] = len(dependency_warnings) > 0
+        
+        # Actualizar AST eliminando definiciones del archivo
+        if path.endswith(".py"):
+            try:
+                state = getattr(mcp, 'project_state', None)
+                if state and state.ast_enabled and hasattr(state, 'ast_index'):
+                    original_count = len(state.ast_index)
+                    state.ast_index = [d for d in state.ast_index if d.get('file') != path]
+                    removed_count = original_count - len(state.ast_index)
+                    if removed_count > 0:
+                        logger.info(f"Removed {removed_count} definitions from AST index for {path}")
+            except Exception as e:
+                logger.warning(f"Failed to update AST index after deleting {path}: {e}")
+    
+    return result
 
 @mcp.tool
 async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Context = None) -> dict:

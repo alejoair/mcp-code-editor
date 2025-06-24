@@ -96,11 +96,44 @@ class DependencyAnalyzer:
             breaking_changes = self._detect_breaking_changes(signature_changes, affected_callers)
             analysis["breaking_changes"] = breaking_changes
             
-            # Calcular nivel de impacto
+            # NUEVAS FUNCIONALIDADES:
+            
+            # Analizar impacto en herencia para clases modificadas
+            inheritance_impact = []
+            for class_name in modified_items["classes"]:
+                inheritance_issues = self._analyze_inheritance_impact(class_name, {})
+                inheritance_impact.extend(inheritance_issues)
+            analysis["inheritance_impact"] = inheritance_impact
+            
+            # Analizar impacto en composición
+            composition_impact = []
+            for class_name in modified_items["classes"]:
+                composition_issues = self._analyze_composition_impact(class_name)
+                composition_impact.extend(composition_issues)
+            analysis["composition_impact"] = composition_impact
+            
+            # Trazar cadenas de dependencia
+            all_modified = modified_items["functions"] + modified_items["classes"]
+            dependency_chains = self._trace_dependency_chains(all_modified, max_depth=3)
+            chains_impact = self._analyze_dependency_chains_impact(dependency_chains)
+            analysis["dependency_chains"] = {
+                "chains": dependency_chains,
+                "impact_analysis": chains_impact
+            }
+            
+            # Generar sugerencias de migración
+            migration_suggestions = self._generate_migration_suggestions(breaking_changes)
+            analysis["migration_suggestions"] = migration_suggestions
+            
+            # Generar parches automáticos
+            auto_fix_patches = self._generate_auto_fix_patches(migration_suggestions)
+            analysis["auto_fix_patches"] = auto_fix_patches
+            
+            # Calcular nivel de impacto (actualizado con nuevos datos)
             impact_level = self._calculate_impact_level(modified_items, affected_callers, breaking_changes)
             analysis["impact_level"] = impact_level
             
-            # Generar recomendaciones
+            # Generar recomendaciones (actualizado con nuevos datos)
             recommendations = self._generate_recommendations(analysis)
             analysis["recommendations"] = recommendations
             
@@ -298,7 +331,7 @@ class DependencyAnalyzer:
         return []
     
     def _find_affected_callers(self, file_path: str, modified_items: List[str]) -> List[Dict]:
-        """Encuentra todos los callers de las funciones/clases modificadas."""
+        """Encuentra todos los callers de las funciones/clases modificadas usando análisis AST detallado."""
         affected_callers = []
         
         try:
@@ -306,29 +339,302 @@ class DependencyAnalyzer:
         except (OSError, ValueError):
             normalized_file_path = file_path
         
-        for item_name in modified_items:
-            # Buscar en el índice AST todos los lugares donde se usa este item
-            for definition in self.ast_index:
-                try:
-                    def_file = str(Path(definition.get("file", "")).resolve())
-                except (OSError, ValueError):
-                    def_file = definition.get("file", "")
-                
-                # Solo buscar en archivos diferentes
-                if def_file != normalized_file_path:
-                    # Buscar referencias en la firma/código (análisis simplificado)
-                    signature = definition.get("signature", "")
-                    if item_name in signature:
-                        affected_callers.append({
-                            "caller_name": definition.get("name"),
-                            "caller_type": definition.get("type"),
-                            "file": definition.get("file"),
-                            "line": definition.get("line_start", definition.get("line")),
-                            "calls": item_name,
-                            "confidence": "medium"  # En un análisis real sería más sofisticado
-                        })
+        # Obtener archivos únicos para análisis
+        files_to_analyze = set()
+        for definition in self.ast_index:
+            def_file = definition.get("file", "")
+            if def_file and def_file != normalized_file_path:
+                files_to_analyze.add(def_file)
+        
+        # Analizar cada archivo usando AST
+        for file_to_analyze in files_to_analyze:
+            for item_name in modified_items:
+                references = self._find_detailed_references(file_to_analyze, item_name)
+                for ref in references:
+                    affected_callers.append({
+                        "caller_name": ref.get("context", f"Reference in {Path(file_to_analyze).name}"),
+                        "caller_type": ref.get("type", "unknown"),
+                        "file": file_to_analyze,
+                        "line": ref.get("line", 0),
+                        "calls": item_name,
+                        "confidence": ref.get("confidence", 0.5),
+                        "reference_type": ref.get("type", "unknown")
+                    })
         
         return affected_callers
+    
+    def _find_detailed_references(self, file_path: str, function_name: str) -> List[Dict]:
+        """Análisis AST real del código fuente para encontrar referencias."""
+        references = []
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            tree = ast.parse(content)
+            
+            for node in ast.walk(tree):
+                # Buscar llamadas de función
+                if isinstance(node, ast.Call):
+                    if self._is_function_call(node, function_name):
+                        references.append({
+                            "type": "function_call",
+                            "line": node.lineno,
+                            "context": self._get_surrounding_context(content, node.lineno),
+                            "confidence": 0.9
+                        })
+                
+                # Buscar imports
+                elif isinstance(node, ast.ImportFrom):
+                    if self._imports_function(node, function_name):
+                        references.append({
+                            "type": "import",
+                            "line": node.lineno,
+                            "context": f"Import: {function_name}",
+                            "confidence": 1.0
+                        })
+                
+                # Buscar atributos y nombres
+                elif isinstance(node, ast.Name) and node.id == function_name:
+                    references.append({
+                        "type": "name_reference",
+                        "line": node.lineno,
+                        "context": self._get_surrounding_context(content, node.lineno),
+                        "confidence": 0.7
+                    })
+                
+                elif isinstance(node, ast.Attribute) and node.attr == function_name:
+                    references.append({
+                        "type": "attribute_reference",
+                        "line": node.lineno,
+                        "context": self._get_surrounding_context(content, node.lineno),
+                        "confidence": 0.8
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error analyzing {file_path}: {e}")
+        
+        return references
+    
+    def _is_function_call(self, node: ast.Call, function_name: str) -> bool:
+        """Verifica si un nodo Call es una llamada a la función especificada."""
+        if isinstance(node.func, ast.Name):
+            return node.func.id == function_name
+        elif isinstance(node.func, ast.Attribute):
+            return node.func.attr == function_name
+        return False
+    
+    def _imports_function(self, node: ast.ImportFrom, function_name: str) -> bool:
+        """Verifica si un import incluye la función especificada."""
+        if node.names:
+            for alias in node.names:
+                if alias.name == function_name or alias.asname == function_name:
+                    return True
+        return False
+    
+    def _get_surrounding_context(self, content: str, line_number: int, context_lines: int = 1) -> str:
+        """Obtiene el contexto alrededor de una línea específica."""
+        lines = content.splitlines()
+        start = max(0, line_number - context_lines - 1)
+        end = min(len(lines), line_number + context_lines)
+        
+        context_lines_content = lines[start:end]
+        return ' | '.join(context_lines_content).strip()
+    
+    def _analyze_inheritance_impact(self, class_name: str, changes: Dict) -> List[Dict]:
+        """Analiza impacto en herencia de clases."""
+        inheritance_issues = []
+        
+        # Buscar clases que heredan de esta
+        for definition in self.ast_index:
+            if definition.get("type") == "class":
+                inheritance = definition.get("inheritance", [])
+                if class_name in inheritance:
+                    inheritance_issues.append({
+                        "derived_class": definition.get("name"),
+                        "file": definition.get("file"),
+                        "impact": "may_break_inheritance",
+                        "severity": "high",
+                        "line": definition.get("line_start", definition.get("line", 0))
+                    })
+        
+        # Buscar clases de las que esta hereda (cambios en clases padre)
+        for definition in self.ast_index:
+            if definition.get("type") == "class" and definition.get("name") == class_name:
+                inheritance = definition.get("inheritance", [])
+                for parent_class in inheritance:
+                    # Verificar si alguna clase padre fue modificada
+                    inheritance_issues.append({
+                        "derived_class": class_name,
+                        "parent_class": parent_class,
+                        "file": definition.get("file"),
+                        "impact": "parent_class_changed",
+                        "severity": "medium",
+                        "line": definition.get("line_start", definition.get("line", 0))
+                    })
+        
+        return inheritance_issues
+    
+    def _analyze_composition_impact(self, class_name: str) -> List[Dict]:
+        """Analiza impacto en composición de objetos."""
+        composition_issues = []
+        
+        # Buscar donde se instancia esta clase
+        for definition in self.ast_index:
+            signature = definition.get("signature", "")
+            if f"{class_name}(" in signature:
+                composition_issues.append({
+                    "composed_in": definition.get("name"),
+                    "composed_in_type": definition.get("type"),
+                    "file": definition.get("file"),
+                    "impact": "composition_may_break",
+                    "severity": "medium",
+                    "line": definition.get("line_start", definition.get("line", 0))
+                })
+        
+        return composition_issues
+    
+    def _trace_dependency_chains(self, modified_items: List[str], max_depth: int = 3) -> List[List[str]]:
+        """Traza cadenas de dependencia hasta N niveles."""
+        chains = []
+        
+        for item in modified_items:
+            chain = [item]
+            self._build_chain_recursive(item, chain, chains, max_depth, set())
+        
+        return chains
+    
+    def _build_chain_recursive(self, current_item: str, current_chain: List[str], 
+                              all_chains: List[List[str]], max_depth: int, visited: Set[str]):
+        """Construye cadenas de dependencia recursivamente."""
+        if len(current_chain) >= max_depth or current_item in visited:
+            if len(current_chain) > 1:  # Solo agregar cadenas con al menos 2 elementos
+                all_chains.append(current_chain.copy())
+            return
+        
+        visited.add(current_item)
+        
+        # Buscar qué depende de current_item
+        dependents = self._find_direct_dependents(current_item)
+        
+        for dependent in dependents:
+            if dependent not in visited:
+                current_chain.append(dependent)
+                self._build_chain_recursive(dependent, current_chain, all_chains, max_depth, visited.copy())
+                current_chain.pop()  # Backtrack
+        
+        visited.remove(current_item)
+    
+    def _find_direct_dependents(self, item_name: str) -> List[str]:
+        """Encuentra elementos que dependen directamente del item especificado."""
+        dependents = []
+        
+        for definition in self.ast_index:
+            signature = definition.get("signature", "")
+            if item_name in signature and definition.get("name") != item_name:
+                dependents.append(definition.get("name", ""))
+        
+        return dependents
+    
+    def _analyze_dependency_chains_impact(self, chains: List[List[str]]) -> Dict[str, Any]:
+        """Analiza el impacto de las cadenas de dependencia."""
+        impact_analysis = {
+            "total_chains": len(chains),
+            "max_chain_length": max([len(chain) for chain in chains]) if chains else 0,
+            "affected_items_count": len(set([item for chain in chains for item in chain])),
+            "high_impact_chains": [],
+            "risk_level": "low"
+        }
+        
+        # Identificar cadenas de alto impacto (largo > 2)
+        for chain in chains:
+            if len(chain) > 2:
+                impact_analysis["high_impact_chains"].append({
+                    "chain": chain,
+                    "length": len(chain),
+                    "risk": "high" if len(chain) > 3 else "medium"
+                })
+        
+        # Calcular nivel de riesgo general
+        if impact_analysis["max_chain_length"] > 3:
+            impact_analysis["risk_level"] = "high"
+        elif impact_analysis["max_chain_length"] > 2:
+            impact_analysis["risk_level"] = "medium"
+        
+        return impact_analysis
+    
+    def _generate_migration_suggestions(self, breaking_changes: List[Dict]) -> List[Dict]:
+        """Genera sugerencias específicas de migración."""
+        suggestions = []
+        
+        for change in breaking_changes:
+            change_type = change.get("change_type", "")
+            function_name = change.get("function", "")
+            
+            if change_type == "removed_args":
+                suggestions.append({
+                    "type": "argument_removal",
+                    "function": function_name,
+                    "suggestion": f"Remove argument from calls to '{function_name}'",
+                    "confidence": 0.8,
+                    "auto_fixable": True,
+                    "files_affected": change.get("files_affected", [])
+                })
+            
+            elif change_type == "added_args":
+                suggestions.append({
+                    "type": "argument_addition",
+                    "function": function_name,
+                    "suggestion": f"Add required argument to calls to '{function_name}'",
+                    "confidence": 0.7,
+                    "auto_fixable": False,  # Requires manual intervention for argument values
+                    "files_affected": change.get("files_affected", [])
+                })
+            
+            elif change_type == "changed_args":
+                suggestions.append({
+                    "type": "argument_modification",
+                    "function": function_name,
+                    "suggestion": f"Update argument names/types in calls to '{function_name}'",
+                    "confidence": 0.6,
+                    "auto_fixable": False,
+                    "files_affected": change.get("files_affected", [])
+                })
+            
+            elif change_type == "removed_function":
+                suggestions.append({
+                    "type": "function_removal",
+                    "function": function_name,
+                    "suggestion": f"Find alternative for removed function '{function_name}'",
+                    "confidence": 0.9,
+                    "auto_fixable": False,
+                    "files_affected": change.get("files_affected", [])
+                })
+        
+        return suggestions
+    
+    def _generate_auto_fix_patches(self, suggestions: List[Dict]) -> List[Dict]:
+        """Genera parches automáticos para sugerencias que se pueden arreglar automáticamente."""
+        patches = []
+        
+        for suggestion in suggestions:
+            if suggestion.get("auto_fixable", False):
+                patch = {
+                    "suggestion_id": id(suggestion),
+                    "type": suggestion["type"],
+                    "function": suggestion["function"],
+                    "files_to_patch": suggestion.get("files_affected", []),
+                    "patch_type": "regex_replacement",
+                    "confidence": suggestion.get("confidence", 0.5)
+                }
+                
+                if suggestion["type"] == "argument_removal":
+                    patch["description"] = f"Auto-remove deprecated arguments in {suggestion['function']} calls"
+                    patch["risk_level"] = "medium"
+                
+                patches.append(patch)
+        
+        return patches
     
     def _detect_breaking_changes(self, signature_changes: List[Dict], affected_callers: List[Dict]) -> List[Dict]:
         """Detecta breaking changes basado en cambios de firma y callers."""
@@ -402,6 +708,38 @@ class DependencyAnalyzer:
         # Sugerencias específicas
         if analysis["signature_changes"]:
             recommendations.append("🔧 Consider: Use get_code_definition to verify all callers")
+        
+        # NUEVAS RECOMENDACIONES:
+        
+        # Herencia
+        inheritance_impact = analysis.get("inheritance_impact", [])
+        if inheritance_impact:
+            recommendations.append(f"🏗️  INHERITANCE: {len(inheritance_impact)} inheritance relationships affected")
+            high_inheritance = [i for i in inheritance_impact if i.get("severity") == "high"]
+            if high_inheritance:
+                recommendations.append("   • High risk: derived classes may break")
+        
+        # Composición
+        composition_impact = analysis.get("composition_impact", [])
+        if composition_impact:
+            recommendations.append(f"📦 COMPOSITION: {len(composition_impact)} composition relationships affected")
+        
+        # Cadenas de dependencia
+        dependency_chains = analysis.get("dependency_chains", {})
+        chains_impact = dependency_chains.get("impact_analysis", {})
+        if chains_impact.get("risk_level") in ["medium", "high"]:
+            max_length = chains_impact.get("max_chain_length", 0)
+            recommendations.append(f"🔗 DEPENDENCY CHAINS: Max depth {max_length} - review cascade effects")
+        
+        # Sugerencias de migración
+        migration_suggestions = analysis.get("migration_suggestions", [])
+        auto_fixable = [s for s in migration_suggestions if s.get("auto_fixable", False)]
+        if auto_fixable:
+            recommendations.append(f"🔧 AUTO-FIX: {len(auto_fixable)} issues can be automatically fixed")
+        
+        manual_fixes = [s for s in migration_suggestions if not s.get("auto_fixable", False)]
+        if manual_fixes:
+            recommendations.append(f"✋ MANUAL: {len(manual_fixes)} issues require manual intervention")
         
         if impact_level in ["high", "critical"]:
             recommendations.append("🧪 Strongly recommended: Run tests after applying changes")

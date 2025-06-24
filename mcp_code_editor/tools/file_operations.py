@@ -53,7 +53,7 @@ def create_file(path: str, content: str, overwrite: bool = False) -> Dict[str, A
             "directories_created": not file_path.parent.exists()
         }
         
-        # Backup functionality disabled
+        # AST update moved to server.py to avoid circular imports
             
         return result
         
@@ -197,14 +197,14 @@ def read_file_with_lines(path: str, start_line: Optional[int] = None, end_line: 
 
 def delete_file(path: str, create_backup: bool = False) -> Dict[str, Any]:
     """
-    Delete a file with optional backup creation.
+    Delete a file with automatic dependency analysis.
     
     Args:
         path: The file path to delete
-        create_backup: Whether to create a backup before deletion (default: False)
+        create_backup: DEPRECATED - backup functionality removed
         
     Returns:
-        Dictionary with deletion results and file information
+        Dictionary with deletion results, dependency warnings, and affected files
     """
     try:
         file_path = Path(path)
@@ -218,34 +218,30 @@ def delete_file(path: str, create_backup: bool = False) -> Dict[str, Any]:
         # Get file info before deletion
         file_size = file_path.stat().st_size
         
-        # Backup functionality disabled by default
-        backup_created = None
-        if create_backup:
-            # Create backup with timestamp to avoid conflicts
-            import time
-            timestamp = int(time.time())
-            backup_path = file_path.with_suffix(f'{file_path.suffix}.deleted.{timestamp}')
-            
-            # Copy file to backup location
-            shutil.copy2(file_path, backup_path)
-            backup_created = str(backup_path)
-            logger.info(f"Created backup: {backup_path}")
+        # Dependency analysis moved to server.py to avoid circular imports
+        dependency_warnings = []
+        affected_files = []
+        definitions_lost = []
         
-        # Delete the file
+        # Analysis logic moved to server.py
+        
+        # Eliminar el archivo (sin backup)
         file_path.unlink()
         
         logger.info(f"Deleted file: {file_path} ({file_size} bytes)")
+        if dependency_warnings:
+            logger.warning(f"File deletion may break {len(affected_files)} dependent files")
         
         result = {
             "success": True,
             "message": f"Successfully deleted file: {path}",
             "file_path": str(file_path),
             "file_size_bytes": file_size,
-            "backup_created": backup_created is not None
+            "dependency_warnings": dependency_warnings,
+            "affected_files": affected_files,
+            "definitions_lost": definitions_lost,
+            "breaking_change_risk": len(dependency_warnings) > 0
         }
-        
-        if backup_created:
-            result["backup_path"] = backup_created
             
         return result
         
