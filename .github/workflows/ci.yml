@@ -79,7 +79,7 @@ jobs:
         INIT_VERSION=$(python -c "import sys; sys.path.insert(0, '.'); import mcp_code_editor; print(mcp_code_editor.__version__)")
         
         # Get version from .bumpversion.cfg
-        BUMP_VERSION=$(grep "current_version" .bumpversion.cfg | cut -d' ' -f3)
+        BUMP_VERSION=$(grep "^current_version" .bumpversion.cfg | head -1 | cut -d'=' -f2 | tr -d ' ')
         
         echo "📦 pyproject.toml version: $PYPROJECT_VERSION"
         echo "🐍 __init__.py version: $INIT_VERSION"
