@@ -12,6 +12,7 @@ This package provides comprehensive code editing functionality including:
 """
 
 __version__ = "0.1.13"
+# Test automatic release workflow
 __author__ = "MCP Code Editor Team"
 __email__ = "mcpcodeeditor@example.com"
 
