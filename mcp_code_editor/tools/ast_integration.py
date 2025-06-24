@@ -233,9 +233,17 @@ def enhance_apply_diff_with_ast(file_path: str, diff_blocks: List[Dict[str, Any]
     # Pre-apply analysis
     impact_analysis = analyzer.analyze_diff_impact(file_path, diff_blocks)
     
+    # Solo bloquear si hay errores de sintaxis, no por impacto
+    should_proceed = True
+    if not impact_analysis.get("valid", True):
+        # Solo bloquear si el error es de sintaxis, no de análisis
+        if impact_analysis.get("error_type") == "syntax":
+            should_proceed = False
+        # Para otros tipos de error (análisis), proceder con warnings
+    
     return {
         "ast_analysis": impact_analysis,
-        "should_proceed": impact_analysis.get("valid", True),
+        "should_proceed": should_proceed,
         "warnings": impact_analysis.get("potential_issues", []),
         "recommendations": impact_analysis.get("recommendations", [])
     }
