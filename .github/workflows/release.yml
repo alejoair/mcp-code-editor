@@ -1,30 +1,14 @@
 name: Release to PyPI
 
 on:
-  # Manual trigger for releases
-  workflow_dispatch:
-    inputs:
-      version_type:
-        description: 'Version bump type'
-        required: true
-        default: 'patch'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-      skip_pypi:
-        description: 'Skip PyPI publication (for testing)'
-        required: false
-        default: false
-        type: boolean
+  push:
+    branches: [ master ]
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
-  # Job para bump version, crear release y publicar en PyPI
   release:
     runs-on: ubuntu-latest
     
@@ -61,27 +45,38 @@ jobs:
       run: |
         if git rev-parse "refs/tags/${{ steps.current_version.outputs.tag }}" >/dev/null 2>&1; then
           echo "exists=true" >> $GITHUB_OUTPUT
-          echo "⚠️ Tag ${{ steps.current_version.outputs.tag }} already exists"
+          echo "⚠️ Tag ${{ steps.current_version.outputs.tag }} already exists, will bump version"
         else
           echo "exists=false" >> $GITHUB_OUTPUT
           echo "✅ Tag ${{ steps.current_version.outputs.tag }} does not exist"
         fi
     
-    - name: Bump version
+    - name: Bump version automatically
       id: bump_version
+      if: steps.check_current_tag.outputs.exists == 'true'
       run: |
-        echo "🔄 Bumping version: ${{ github.event.inputs.version_type }}"
-        bump2version ${{ github.event.inputs.version_type }} --verbose
+        echo "🔄 Auto-bumping patch version"
+        bump2version patch --verbose
         NEW_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "new_tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "✅ Version bumped to: $NEW_VERSION"
     
-    - name: Push changes and tags
+    - name: Set version for release
+      id: release_version
       run: |
-        echo "📤 Pushing changes and tags to repository"
-        git push origin HEAD:master
-        git push origin --tags
+        if [ "${{ steps.check_current_tag.outputs.exists }}" == "true" ]; then
+          echo "version=${{ steps.bump_version.outputs.new_version }}" >> $GITHUB_OUTPUT
+          echo "tag=${{ steps.bump_version.outputs.new_tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${{ steps.current_version.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "tag=${{ steps.current_version.outputs.tag }}" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create Git Tag
+      run: |
+        git tag ${{ steps.release_version.outputs.tag }}
+        git push origin ${{ steps.release_version.outputs.tag }}
     
     - name: Build package
       run: |
@@ -97,8 +92,13 @@ jobs:
       id: changelog
       run: |
         echo "📝 Generating changelog"
-        # Simple changelog generation - you can enhance this
-        COMMITS=$(git log ${{ steps.current_version.outputs.tag }}..HEAD --pretty=format:"- %s" --reverse | head -20)
+        # Get commits since last tag (if any)
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [ -n "$LAST_TAG" ] && [ "$LAST_TAG" != "${{ steps.release_version.outputs.tag }}" ]; then
+          COMMITS=$(git log $LAST_TAG..HEAD --pretty=format:"- %s" --reverse | head -20)
+        else
+          COMMITS=$(git log --pretty=format:"- %s" --reverse | head -10)
+        fi
         if [ -z "$COMMITS" ]; then
           COMMITS="- Version bump and maintenance updates"
         fi
@@ -109,17 +109,17 @@ jobs:
     - name: Create GitHub Release
       uses: ncipollo/release-action@v1
       with:
-        tag: ${{ steps.bump_version.outputs.new_tag }}
-        name: Release ${{ steps.bump_version.outputs.new_tag }}
+        tag: ${{ steps.release_version.outputs.tag }}
+        name: Release ${{ steps.release_version.outputs.tag }}
         body: |
-          ## 🚀 Release ${{ steps.bump_version.outputs.new_version }}
+          ## 🚀 Release ${{ steps.release_version.outputs.version }}
           
           ### Changes in this release:
           ${{ steps.changelog.outputs.commits }}
           
           ### Installation:
           ```bash
-          pip install mcp-code-editor==${{ steps.bump_version.outputs.new_version }}
+          pip install mcp-code-editor==${{ steps.release_version.outputs.version }}
           ```
           
           ### Quick Start:
@@ -128,7 +128,7 @@ jobs:
           ```
           
           ### Links:
-          - 📦 [PyPI Package](https://pypi.org/project/mcp-code-editor/${{ steps.bump_version.outputs.new_version }}/)
+          - 📦 [PyPI Package](https://pypi.org/project/mcp-code-editor/${{ steps.release_version.outputs.version }}/)
           - 📖 [Documentation](https://alejoair.github.io/mcp-code-editor/)
           - 🐛 [Report Issues](https://github.com/alejoair/mcp-code-editor/issues)
         draft: false
@@ -136,7 +136,6 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Publish to PyPI
-      if: ${{ !github.event.inputs.skip_pypi }}
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         password: ${{ secrets.PYPI_API_TOKEN }}
@@ -144,11 +143,7 @@ jobs:
     
     - name: Notify success
       run: |
-        echo "🎉 Successfully released version ${{ steps.bump_version.outputs.new_version }}!"
-        if [ "${{ github.event.inputs.skip_pypi }}" != "true" ]; then
-          echo "📦 Package published to PyPI: https://pypi.org/project/mcp-code-editor/${{ steps.bump_version.outputs.new_version }}/"
-        else
-          echo "⚠️ PyPI publication skipped as requested"
-        fi
-        echo "🏷️ GitHub Release: https://github.com/alejoair/mcp-code-editor/releases/tag/${{ steps.bump_version.outputs.new_tag }}"
+        echo "🎉 Successfully released version ${{ steps.release_version.outputs.version }}!"
+        echo "📦 Package published to PyPI: https://pypi.org/project/mcp-code-editor/${{ steps.release_version.outputs.version }}/"
+        echo "🏷️ GitHub Release: https://github.com/alejoair/mcp-code-editor/releases/tag/${{ steps.release_version.outputs.tag }}"
         echo "📖 Documentation: https://alejoair.github.io/mcp-code-editor/"
