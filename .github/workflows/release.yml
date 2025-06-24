@@ -1,87 +1,125 @@
 name: Release to PyPI
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-    types: [ closed ]
+  # Manual trigger for releases
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      skip_pypi:
+        description: 'Skip PyPI publication (for testing)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
-  # Job para crear release y publicar en PyPI
+  # Job para bump version, crear release y publicar en PyPI
   release:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     
     steps:
     - uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Necesario para tags
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
     
-    - name: Install build dependencies
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build twine
+        pip install -e ".[dev]"
     
-    - name: Get version from pyproject.toml
-      id: get_version
-      run: |
-        VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-    
-    - name: Check if tag exists
-      id: check_tag
-      run: |
-        if git rev-parse "refs/tags/${{ steps.get_version.outputs.tag }}" >/dev/null 2>&1; then
-          echo "exists=true" >> $GITHUB_OUTPUT
-        else
-          echo "exists=false" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Create Git Tag
-      if: steps.check_tag.outputs.exists == 'false'
+    - name: Configure Git
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git tag ${{ steps.get_version.outputs.tag }}
-        git push origin ${{ steps.get_version.outputs.tag }}
+    
+    - name: Get current version
+      id: current_version
+      run: |
+        CURRENT_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$CURRENT_VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Check if current version tag exists
+      id: check_current_tag
+      run: |
+        if git rev-parse "refs/tags/${{ steps.current_version.outputs.tag }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "⚠️ Tag ${{ steps.current_version.outputs.tag }} already exists"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "✅ Tag ${{ steps.current_version.outputs.tag }} does not exist"
+        fi
+    
+    - name: Bump version
+      id: bump_version
+      run: |
+        echo "🔄 Bumping version: ${{ github.event.inputs.version_type }}"
+        bump2version ${{ github.event.inputs.version_type }} --verbose
+        NEW_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "new_tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "✅ Version bumped to: $NEW_VERSION"
+    
+    - name: Push changes and tags
+      run: |
+        echo "📤 Pushing changes and tags to repository"
+        git push origin HEAD:master
+        git push origin --tags
     
     - name: Build package
       run: |
+        echo "🔨 Building package"
         python -m build
     
     - name: Check package
       run: |
+        echo "🔍 Checking package integrity"
         python -m twine check dist/*
     
+    - name: Generate changelog
+      id: changelog
+      run: |
+        echo "📝 Generating changelog"
+        # Simple changelog generation - you can enhance this
+        COMMITS=$(git log ${{ steps.current_version.outputs.tag }}..HEAD --pretty=format:"- %s" --reverse | head -20)
+        if [ -z "$COMMITS" ]; then
+          COMMITS="- Version bump and maintenance updates"
+        fi
+        echo "commits<<EOF" >> $GITHUB_OUTPUT
+        echo "$COMMITS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    
     - name: Create GitHub Release
-      if: steps.check_tag.outputs.exists == 'false'
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: ncipollo/release-action@v1
       with:
-        tag_name: ${{ steps.get_version.outputs.tag }}
-        release_name: Release ${{ steps.get_version.outputs.tag }}
+        tag: ${{ steps.bump_version.outputs.new_tag }}
+        name: Release ${{ steps.bump_version.outputs.new_tag }}
         body: |
-          ## 🚀 Release ${{ steps.get_version.outputs.version }}
+          ## 🚀 Release ${{ steps.bump_version.outputs.new_version }}
           
           ### Changes in this release:
-          - Automated release from master branch
-          - Updated to version ${{ steps.get_version.outputs.version }}
+          ${{ steps.changelog.outputs.commits }}
           
           ### Installation:
           ```bash
-          pip install mcp-code-editor==${{ steps.get_version.outputs.version }}
+          pip install mcp-code-editor==${{ steps.bump_version.outputs.new_version }}
           ```
           
           ### Quick Start:
@@ -89,20 +127,28 @@ jobs:
           mcp-code-editor
           ```
           
-          See the [README](https://github.com/alejoair/mcp-code-editor/blob/master/README.md) for full documentation.
+          ### Links:
+          - 📦 [PyPI Package](https://pypi.org/project/mcp-code-editor/${{ steps.bump_version.outputs.new_version }}/)
+          - 📖 [Documentation](https://alejoair.github.io/mcp-code-editor/)
+          - 🐛 [Report Issues](https://github.com/alejoair/mcp-code-editor/issues)
         draft: false
         prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Publish to PyPI
-      if: steps.check_tag.outputs.exists == 'false'
+      if: ${{ !github.event.inputs.skip_pypi }}
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         password: ${{ secrets.PYPI_API_TOKEN }}
         verbose: true
     
     - name: Notify success
-      if: steps.check_tag.outputs.exists == 'false'
       run: |
-        echo "🎉 Successfully released version ${{ steps.get_version.outputs.version }} to PyPI!"
-        echo "📦 Package: https://pypi.org/project/mcp-code-editor/${{ steps.get_version.outputs.version }}/"
-        echo "🏷️ GitHub Release: https://github.com/alejoair/mcp-code-editor/releases/tag/${{ steps.get_version.outputs.tag }}"
+        echo "🎉 Successfully released version ${{ steps.bump_version.outputs.new_version }}!"
+        if [ "${{ github.event.inputs.skip_pypi }}" != "true" ]; then
+          echo "📦 Package published to PyPI: https://pypi.org/project/mcp-code-editor/${{ steps.bump_version.outputs.new_version }}/"
+        else
+          echo "⚠️ PyPI publication skipped as requested"
+        fi
+        echo "🏷️ GitHub Release: https://github.com/alejoair/mcp-code-editor/releases/tag/${{ steps.bump_version.outputs.new_tag }}"
+        echo "📖 Documentation: https://alejoair.github.io/mcp-code-editor/"
