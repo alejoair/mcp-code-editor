@@ -87,8 +87,8 @@ def validate_setup():
     init_version = result.stdout.strip()
     
     # Versión en .bumpversion.cfg
-    result = run_command('grep "current_version" .bumpversion.cfg')
-    bump_version = result.stdout.split()[-1].strip()
+    result = run_command('grep "^current_version" .bumpversion.cfg')
+    bump_version = result.stdout.split('=')[1].strip()
     
     print(f"  pyproject.toml: {pyproject_version}")
     print(f"  __init__.py: {init_version}")
