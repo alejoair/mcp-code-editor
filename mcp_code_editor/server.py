@@ -646,7 +646,7 @@ async def get_code_definition(
                 "message": "AST analysis not enabled. Run setup with analyze_ast=True."
             }
         
-        # Search for definitions
+        # Search for definitions in project AST
         matches = search_definitions(
             identifier, 
             state.ast_index, 
@@ -654,7 +654,41 @@ async def get_code_definition(
             context_file
         )
         
-        if not matches:
+        # NUEVO: Also search in indexed libraries
+        library_matches = []
+        for lib_name, lib_data in state.indexed_libraries.items():
+            if "definitions" in lib_data:
+                for lib_def in lib_data["definitions"]:
+                    if definition_type != "any" and lib_def.get("type") != definition_type:
+                        continue
+                    
+                    name = lib_def.get("name", "").lower()
+                    identifier_lower = identifier.lower()
+                    
+                    if identifier_lower in name:
+                        # Calculate relevance score
+                        score = 0
+                        if name == identifier_lower:
+                            score = 100
+                        elif name.startswith(identifier_lower):
+                            score = 50
+                        else:
+                            score = 10
+                        
+                        # Add library context
+                        lib_match = lib_def.copy()
+                        lib_match["relevance_score"] = score
+                        lib_match["source"] = "external_library"
+                        lib_match["library_name"] = lib_name
+                        library_matches.append(lib_match)
+        
+        # Sort library matches by relevance
+        library_matches.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        
+        # Combine project and library matches (prioritize project matches)
+        all_matches = matches + library_matches[:5]  # Limit library matches to 5
+        
+        if not all_matches:
             # No definitions found, but still search for usages if requested
             usage_locations = []
             if include_usage:
@@ -677,13 +711,21 @@ async def get_code_definition(
         
         # Prepare results
         definitions = []
-        for match in matches[:10]:  # Limit to top 10 results
+        for match in all_matches[:10]:  # Limit to top 10 results from both sources
             definition = {
                 "name": match["name"],
                 "type": match["type"],
-                "file": match["file"],
+                "file": match.get("file", match.get("library_name", "")),
                 "relevance_score": match.get("relevance_score", 0)
             }
+            
+            # Add source information (project vs library)
+            if match.get("source") == "external_library":
+                definition["source"] = "external_library"
+                definition["library_name"] = match.get("library_name")
+                definition["module_path"] = match.get("module_path")
+            else:
+                definition["source"] = "project"
             
             # Add type-specific information
             if match["type"] == "function":
@@ -734,7 +776,9 @@ async def get_code_definition(
             "success": True,
             "found": True,
             "identifier": identifier,
-            "total_matches": len(matches),
+            "total_matches": len(all_matches),
+            "project_matches": len(matches),
+            "library_matches": len(library_matches),
             "definitions": definitions,
             "usage_locations": usage_locations,
             "total_usages": len(usage_locations),
@@ -787,9 +831,21 @@ async def index_library_tool(
     try:
         await ctx.info(f"Indexing library '{library_name}'...")
         
+        # Get project state to store indexed libraries
+        state = getattr(mcp, 'project_state', None)
+        if not state:
+            await ctx.error("Project state not initialized. Run setup_code_editor_tool first.")
+            return {
+                "success": False,
+                "error": "ProjectNotSetup",
+                "message": "Project state not initialized. Run setup_code_editor_tool first."
+            }
+        
         result = index_library(library_name, include_private)
         
         if result.get("success", True):  # Assume success if not explicitly failed
+            # Store in project state instead of isolated storage
+            state.indexed_libraries[library_name] = result
             await ctx.info(f"Library '{library_name}' indexed successfully: {result.get('total_definitions', 0)} definitions")
         else:
             await ctx.error(f"Failed to index library '{library_name}': {result.get('message', 'Unknown error')}")
@@ -824,14 +880,22 @@ async def search_library_tool(
         Dictionary with search results
     """
     try:
-        # Check if library is indexed
-        indexed_libs = get_indexed_libraries()
-        if library_name not in indexed_libs:
+        # Get project state to access indexed libraries
+        state = getattr(mcp, 'project_state', None)
+        if not state:
+            return {
+                "success": False,
+                "error": "ProjectNotSetup",
+                "message": "Project state not initialized. Run setup_code_editor_tool first."
+            }
+        
+        # Check if library is indexed in project state
+        if library_name not in state.indexed_libraries:
             return {
                 "success": False,
                 "error": "LibraryNotIndexed",
                 "message": f"Library '{library_name}' not indexed. Run index_library_tool first.",
-                "indexed_libraries": indexed_libs
+                "indexed_libraries": list(state.indexed_libraries.keys())
             }
         
         # Search for definitions
@@ -887,7 +951,16 @@ async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
         Dictionary with list of indexed libraries and their summaries
     """
     try:
-        indexed_libs = get_indexed_libraries()
+        # Get project state to access indexed libraries
+        state = getattr(mcp, 'project_state', None)
+        if not state:
+            return {
+                "success": False,
+                "error": "ProjectNotSetup",
+                "message": "Project state not initialized. Run setup_code_editor_tool first."
+            }
+        
+        indexed_libs = list(state.indexed_libraries.keys())
         
         if not indexed_libs:
             return {
@@ -897,11 +970,17 @@ async def list_indexed_libraries_tool(ctx: Context = None) -> dict:
                 "total_libraries": 0
             }
         
-        # Get summary for each library
+        # Get summary for each library from project state
         libraries_info = []
         for lib_name in indexed_libs:
-            summary = get_library_summary(lib_name)
-            if summary:
+            library_data = state.indexed_libraries.get(lib_name)
+            if library_data:
+                summary = {
+                    "library_name": lib_name,
+                    "total_definitions": library_data.get("total_definitions", 0),
+                    "categories": library_data.get("categories", {}),
+                    "source_info": library_data.get("source_info", {})
+                }
                 libraries_info.append(summary)
         
         result = {

@@ -26,6 +26,8 @@ class ProjectState:
         self.ast_index: List[Dict[str, Any]] = []
         self.ast_enabled: bool = False
         self.file_timestamps: Dict[str, float] = {}
+        # Indexed libraries storage
+        self.indexed_libraries: Dict[str, Dict[str, Any]] = {}
 
     def reset(self):
         """Reset the project state."""
