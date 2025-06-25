@@ -786,12 +786,12 @@ class DependencyAnalyzer:
         # Aplicar cada bloque de diff
         for block in diff_blocks:
             start_line = block.get("start_line", 1) - 1  # Convert to 0-based
-            end_line = block.get("end_line", start_line + 1) - 1
+            end_line = block.get("end_line", start_line + 1)
             replace_content = block.get("replace_content", "")
             
             # Reemplazar líneas
             new_lines = replace_content.splitlines()
-            lines[start_line:end_line + 1] = new_lines
+            lines[start_line:end_line] = new_lines
         
         return '\n'.join(lines)
     
@@ -808,6 +808,9 @@ class DependencyAnalyzer:
                 ['python', '-m', 'pyflakes', temp_file_path],
                 capture_output=True, text=True, timeout=10
             )
+            
+            # Debug: siempre agregar info sobre la ejecución
+            logger.warning(f"Pyflakes debug - returncode: {result.returncode}, stdout: '{result.stdout}', stderr: '{result.stderr}'")
             
             if result.returncode != 0 and result.stdout:
                 for line in result.stdout.strip().split('\n'):
