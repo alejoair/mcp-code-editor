@@ -773,6 +773,17 @@ class DependencyAnalyzer:
             pylint_warnings = self._run_pylint_analysis(new_content)
             warnings.extend(pylint_warnings)
             
+            # Agregar debug info sobre el contenido analizado
+            content_debug = {
+                "tool": "debug",
+                "line": 0,
+                "severity": "info",
+                "message": f"Static analysis executed on content: {len(new_content)} chars, first 100: '{new_content[:100]}...'",
+                "type": "debug_info", 
+                "code": "content-debug"
+            }
+            warnings.append(content_debug)
+            
             return warnings
             
         except Exception as e:
@@ -809,8 +820,17 @@ class DependencyAnalyzer:
                 capture_output=True, text=True, timeout=10
             )
             
-            # Debug: siempre agregar info sobre la ejecución
-            logger.warning(f"Pyflakes debug - returncode: {result.returncode}, stdout: '{result.stdout}', stderr: '{result.stderr}'")
+            # Debug: siempre agregar info sobre la ejecución usando MCP logging
+            # Como no tenemos Context aquí, vamos a agregar debug info en static_warnings
+            debug_info = {
+                "tool": "debug",
+                "line": 0,
+                "severity": "info", 
+                "message": f"Pyflakes executed - returncode: {result.returncode}, stdout_length: {len(result.stdout) if result.stdout else 0}, stderr: '{result.stderr}'",
+                "type": "debug_info",
+                "code": "pyflakes-debug"
+            }
+            warnings.append(debug_info)
             
             if result.returncode != 0 and result.stdout:
                 for line in result.stdout.strip().split('\n'):
