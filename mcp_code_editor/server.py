@@ -178,8 +178,22 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
     # AST-powered pre-analysis if enabled
     ast_warnings = []
     ast_recommendations = []
-    dependency_analysis = {}
-    impact_summary = {}
+    # Initialize dependency analysis with default structure (always available)
+    dependency_analysis = {
+        "modified_functions": [],
+        "modified_classes": [],
+        "affected_callers": [],
+        "breaking_changes": [],
+        "files_to_review": [],
+        "impact_level": "low",
+        "recommendations": []
+    }
+    impact_summary = {
+        "modified_items": 0,
+        "affected_files": 0,
+        "breaking_changes": 0,
+        "impact_level": "low"
+    }
     
     # Get state from context or directly from mcp server
     state = None
@@ -244,14 +258,31 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                     })
                     
             except Exception as e:
+                # Note: In exception handler, we can't use await ctx.error() since we may not have async context
+                # Keep traditional logging for critical error handling
                 ast_warnings.append({
                     "type": "ast_analysis_error",
-                    "severity": "low", 
+                    "severity": "medium", 
                     "message": f"AST analysis failed: {str(e)}"
                 })
-                # Initialize empty dependency analysis on error
-                dependency_analysis = {}
-                impact_summary = {}
+                # Initialize empty dependency analysis on error, but still include it
+                dependency_analysis = {
+                    "error": str(e),
+                    "modified_functions": [],
+                    "modified_classes": [],
+                    "affected_callers": [],
+                    "breaking_changes": [],
+                    "files_to_review": [],
+                    "impact_level": "unknown",
+                    "recommendations": ["⚠️ Dependency analysis failed - manual review recommended"]
+                }
+                impact_summary = {
+                    "error": str(e),
+                    "modified_items": 0,
+                    "affected_files": 0,
+                    "breaking_changes": 0,
+                    "impact_level": "unknown"
+                }
     
     # Apply the diff
     result = apply_diff(path, blocks)
@@ -270,10 +301,16 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
             result["ast_recommendations"] = ast_recommendations
             result["ast_enabled"] = True  # Confirm AST is working
             
-            # NUEVO: Agregar análisis de dependencias
-            if dependency_analysis:
-                result["dependency_analysis"] = dependency_analysis
-                result["impact_summary"] = impact_summary
+            # NUEVO: Agregar análisis de dependencias (SIEMPRE incluir, incluso si está vacío)
+            result["dependency_analysis"] = dependency_analysis if 'dependency_analysis' in locals() else {}
+            result["impact_summary"] = impact_summary if 'impact_summary' in locals() else {}
+            
+            # Log para debugging usando FastMCP Context
+            if ctx:
+                if not dependency_analysis or dependency_analysis.get("error"):
+                    await ctx.warning(f"Dependency analysis missing or failed for {path}: {dependency_analysis.get('error', 'No dependency_analysis variable')}")
+                else:
+                    await ctx.info(f"Dependency analysis successful for {path}: {len(dependency_analysis.get('affected_callers', []))} callers affected")
             
             # NUEVO: Verificar si hay librerías indexadas disponibles para análisis mejorado
             state = getattr(mcp, 'project_state', None)

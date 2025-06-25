@@ -141,8 +141,29 @@ class DependencyAnalyzer:
             analysis["recommendations"] = recommendations
             
             # ANÁLISIS ESTÁTICO CON PYLINT/PYFLAKES
-            static_warnings = self._run_static_analysis(file_path, diff_blocks, current_content)
-            analysis["static_warnings"] = static_warnings
+            # Debug: agregar info básica antes de llamar análisis estático
+            analysis["static_warnings"] = [{
+                "tool": "debug",
+                "line": 0,
+                "severity": "info",
+                "message": "Starting static analysis - method about to be called",
+                "type": "debug_info",
+                "code": "pre-analysis"
+            }]
+            
+            try:
+                static_warnings = self._run_static_analysis(file_path, diff_blocks, current_content)
+                # Combinar debug info con resultados reales
+                analysis["static_warnings"].extend(static_warnings)
+            except Exception as e:
+                analysis["static_warnings"].append({
+                    "tool": "debug",
+                    "line": 0,
+                    "severity": "error",
+                    "message": f"Static analysis failed with error: {str(e)}",
+                    "type": "debug_info",
+                    "code": "analysis-error"
+                })
             
             # Actualizar nivel de impacto si hay errores críticos
             if any(w.get("severity") == "error" for w in static_warnings):
