@@ -756,43 +756,6 @@ class DependencyAnalyzer:
             recommendations.append("🧪 Strongly recommended: Run tests after applying changes")
         
         return recommendations
-
-
-def enhance_apply_diff_with_dependencies(file_path: str, diff_blocks: List[Dict], 
-                                       ast_index: List[Dict]) -> Dict[str, Any]:
-    """
-    Función principal para integrar análisis de dependencias en apply_diff_tool.
-    
-    Args:
-        file_path: Archivo siendo modificado
-        diff_blocks: Bloques de cambios
-        ast_index: Índice AST del proyecto
-        
-    Returns:
-        Análisis de dependencias e impacto
-    """
-    try:
-        analyzer = DependencyAnalyzer(ast_index)
-        dependency_analysis = analyzer.analyze_diff_dependencies(file_path, diff_blocks)
-        
-        return {
-            "dependency_analysis": dependency_analysis,
-            "has_dependencies": len(dependency_analysis["affected_callers"]) > 0,
-            "impact_summary": {
-                "modified_items": len(dependency_analysis["modified_functions"]) + len(dependency_analysis["modified_classes"]),
-                "affected_files": len(dependency_analysis["files_to_review"]),
-                "breaking_changes": len(dependency_analysis["breaking_changes"]),
-                "impact_level": dependency_analysis["impact_level"]
-            }
-        }
-    
-    except Exception as e:
-        logger.error(f"Error in dependency analysis: {e}")
-        return {
-            "dependency_analysis": {"error": str(e)},
-            "has_dependencies": False,
-            "impact_summary": {"error": str(e)}
-        }
     
     def _run_static_analysis(self, file_path: str, diff_blocks: List[Dict], current_content: str) -> List[Dict]:
         """Ejecuta análisis estático en el contenido modificado"""
@@ -934,3 +897,41 @@ def enhance_apply_diff_with_dependencies(file_path: str, diff_blocks: List[Dict]
         except Exception:
             pass
         return None
+
+
+def enhance_apply_diff_with_dependencies(file_path: str, diff_blocks: List[Dict], 
+                                       ast_index: List[Dict]) -> Dict[str, Any]:
+    """
+    Función principal para integrar análisis de dependencias en apply_diff_tool.
+    
+    Args:
+        file_path: Archivo siendo modificado
+        diff_blocks: Bloques de cambios
+        ast_index: Índice AST del proyecto
+        
+    Returns:
+        Análisis de dependencias e impacto
+    """
+    try:
+        analyzer = DependencyAnalyzer(ast_index)
+        dependency_analysis = analyzer.analyze_diff_dependencies(file_path, diff_blocks)
+        
+        return {
+            "dependency_analysis": dependency_analysis,
+            "has_dependencies": len(dependency_analysis["affected_callers"]) > 0,
+            "impact_summary": {
+                "modified_items": len(dependency_analysis["modified_functions"]) + len(dependency_analysis["modified_classes"]),
+                "affected_files": len(dependency_analysis["files_to_review"]),
+                "breaking_changes": len(dependency_analysis["breaking_changes"]),
+                "impact_level": dependency_analysis["impact_level"]
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in dependency analysis: {e}")
+        return {
+            "dependency_analysis": {"error": str(e)},
+            "has_dependencies": False,
+            "impact_summary": {"error": str(e)}
+        }
+    
