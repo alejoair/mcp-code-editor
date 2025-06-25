@@ -1,2 +1,4 @@
 # MCP Code Editor Dependencies
 fastmcp>=2.8.0
+pylint>=3.0.0
+pyflakes>=3.0.0
