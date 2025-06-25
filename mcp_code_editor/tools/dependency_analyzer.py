@@ -11,6 +11,9 @@ import re
 import logging
 from typing import Dict, List, Any, Optional, Set, Tuple
 from pathlib import Path
+import subprocess
+import tempfile
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +139,14 @@ class DependencyAnalyzer:
             # Generar recomendaciones (actualizado con nuevos datos)
             recommendations = self._generate_recommendations(analysis)
             analysis["recommendations"] = recommendations
+            
+            # ANÁLISIS ESTÁTICO CON PYLINT/PYFLAKES
+            static_warnings = self._run_static_analysis(file_path, diff_blocks, current_content)
+            analysis["static_warnings"] = static_warnings
+            
+            # Actualizar nivel de impacto si hay errores críticos
+            if any(w.get("severity") == "error" for w in static_warnings):
+                analysis["impact_level"] = "critical"
             
         except Exception as e:
             logger.error(f"Error analyzing dependencies: {e}")
@@ -782,3 +793,144 @@ def enhance_apply_diff_with_dependencies(file_path: str, diff_blocks: List[Dict]
             "has_dependencies": False,
             "impact_summary": {"error": str(e)}
         }
+    
+    def _run_static_analysis(self, file_path: str, diff_blocks: List[Dict], current_content: str) -> List[Dict]:
+        """Ejecuta análisis estático en el contenido modificado"""
+        try:
+            # Simular aplicación del diff
+            new_content = self._simulate_diff_application(current_content, diff_blocks)
+            
+            warnings = []
+            
+            # 1. PYFLAKES (rápido)
+            pyflakes_warnings = self._run_pyflakes_analysis(new_content)
+            warnings.extend(pyflakes_warnings)
+            
+            # 2. PYLINT (solo errores críticos)
+            pylint_warnings = self._run_pylint_analysis(new_content)
+            warnings.extend(pylint_warnings)
+            
+            return warnings
+            
+        except Exception as e:
+            logger.warning(f"Error in static analysis: {e}")
+            return []
+    
+    def _simulate_diff_application(self, current_content: str, diff_blocks: List[Dict]) -> str:
+        """Simula la aplicación de diff para obtener contenido nuevo"""
+        lines = current_content.splitlines()
+        
+        # Aplicar cada bloque de diff
+        for block in diff_blocks:
+            start_line = block.get("start_line", 1) - 1  # Convert to 0-based
+            end_line = block.get("end_line", start_line + 1) - 1
+            replace_content = block.get("replace_content", "")
+            
+            # Reemplazar líneas
+            new_lines = replace_content.splitlines()
+            lines[start_line:end_line + 1] = new_lines
+        
+        return '\n'.join(lines)
+    
+    def _run_pyflakes_analysis(self, content: str) -> List[Dict]:
+        """Ejecuta pyflakes en el contenido"""
+        warnings = []
+        
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+                temp_file.write(content)
+                temp_file_path = temp_file.name
+            
+            result = subprocess.run(
+                ['python', '-m', 'pyflakes', temp_file_path],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode != 0 and result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        warning = self._parse_pyflakes_line(line, temp_file_path)
+                        if warning:
+                            warnings.append(warning)
+            
+            Path(temp_file_path).unlink()
+            
+        except Exception as e:
+            logger.warning(f"Pyflakes analysis failed: {e}")
+        
+        return warnings
+    
+    def _run_pylint_analysis(self, content: str) -> List[Dict]:
+        """Ejecuta pylint en el contenido (solo errores críticos)"""
+        warnings = []
+        
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+                temp_file.write(content)
+                temp_file_path = temp_file.name
+            
+            result = subprocess.run(
+                ['pylint', temp_file_path, '--errors-only', '--output-format=json', '--disable=C,R,W'],
+                capture_output=True, text=True, timeout=15
+            )
+            
+            if result.stdout.strip():
+                try:
+                    pylint_data = json.loads(result.stdout)
+                    for item in pylint_data:
+                        warning = self._parse_pylint_item(item)
+                        if warning:
+                            warnings.append(warning)
+                except json.JSONDecodeError:
+                    # Fallback si no es JSON válido
+                    logger.warning("Pylint output not in JSON format")
+            
+            Path(temp_file_path).unlink()
+            
+        except Exception as e:
+            logger.warning(f"Pylint analysis failed: {e}")
+        
+        return warnings
+    
+    def _parse_pyflakes_line(self, line: str, temp_path: str) -> Optional[Dict]:
+        """Parsea una línea de salida de pyflakes"""
+        try:
+            # Formato: filename:line:col: message
+            if ':' in line:
+                parts = line.split(':', 3)
+                if len(parts) >= 4:
+                    line_num = int(parts[1])
+                    message = parts[3].strip()
+                    
+                    return {
+                        "tool": "pyflakes",
+                        "line": line_num,
+                        "severity": "error" if "undefined" in message else "warning",
+                        "message": message,
+                        "type": "static_analysis",
+                        "code": "pyflakes"
+                    }
+        except (ValueError, IndexError):
+            pass
+        return None
+    
+    def _parse_pylint_item(self, item: Dict) -> Optional[Dict]:
+        """Parsea un item de salida JSON de pylint"""
+        try:
+            severity_map = {
+                "error": "error",
+                "fatal": "error", 
+                "warning": "warning"
+            }
+            
+            return {
+                "tool": "pylint",
+                "line": item.get("line", 0),
+                "severity": severity_map.get(item.get("type"), "warning"),
+                "message": item.get("message", ""),
+                "type": "static_analysis",
+                "code": item.get("message-id", "")
+            }
+        except Exception:
+            pass
+        return None

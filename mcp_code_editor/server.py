@@ -298,6 +298,21 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                 for lib_info in dependency_analysis["library_context"]:
                     ast_recommendations.append(f"  • {lib_info['function']} uses {lib_info['library']}")
             
+            # Mostrar warnings de análisis estático si existen
+            static_warnings = dependency_analysis.get("static_warnings", [])
+            if static_warnings:
+                result["static_analysis"] = {
+                    "warnings_found": len(static_warnings),
+                    "warnings": static_warnings[:10],  # Limitar a 10 para no saturar
+                    "tools_used": list(set(w.get("tool", "unknown") for w in static_warnings))
+                }
+                
+                # Agregar a recomendaciones
+                error_count = sum(1 for w in static_warnings if w.get("severity") == "error")
+                if error_count > 0:
+                    ast_recommendations.insert(0, f"🚨 STATIC ANALYSIS: {error_count} errors found - fix before applying")
+                    ast_recommendations.insert(1, f"🔍 Check: {', '.join(w['message'][:50] + '...' if len(w['message']) > 50 else w['message'] for w in static_warnings[:3])}")
+            
             # Actualizar suggested_next_action con contexto de librerías
             library_context_summary = ""
             if dependency_analysis.get("library_context"):
