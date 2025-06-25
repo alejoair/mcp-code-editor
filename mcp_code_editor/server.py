@@ -11,7 +11,7 @@ This modular server is designed to be easily extensible.
 """
 
 import logging
-from typing import List, Dict
+from typing import List, Dict, Any
 from fastmcp import FastMCP
 from pathlib import Path
 
@@ -75,7 +75,7 @@ mcp.project_state = ProjectState()
 
 # Register tools with the MCP server
 @mcp.tool
-async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
+async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], ctx: Context = None) -> dict:
     """
     ✏️ INTELLIGENT FILE MODIFICATION: Apply precise changes with automatic dependency analysis.
     
