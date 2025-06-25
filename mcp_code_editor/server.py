@@ -73,6 +73,64 @@ mcp = FastMCP(
 # Initialize project state
 mcp.project_state = ProjectState()
 
+# Helper functions for library integration
+def _enhance_dependency_analysis_with_libraries(analysis, indexed_libraries, file_path):
+    """
+    Enriquece el análisis de dependencias con información de librerías indexadas.
+    
+    Args:
+        analysis: Análisis de dependencias existente
+        indexed_libraries: Dict de librerías indexadas desde project_state
+        file_path: Ruta del archivo siendo modificado
+        
+    Returns:
+        Dict con información adicional sobre librerías indexadas
+    """
+    enhanced_info = {
+        "library_context": [],
+        "available_alternatives": [],
+        "library_compatibility_warnings": []
+    }
+    
+    # Analizar funciones modificadas para detectar uso de librerías indexadas
+    for func_name in analysis.get("modified_functions", []):
+        for lib_name, lib_data in indexed_libraries.items():
+            # Buscar si la función usa métodos de esta librería
+            library_usage = _check_function_uses_library(func_name, lib_name, lib_data, file_path)
+            if library_usage:
+                enhanced_info["library_context"].append({
+                    "function": func_name,
+                    "library": lib_name,
+                    "methods_used": library_usage,
+                    "compatibility_note": f"Function uses methods from indexed library '{lib_name}'"
+                })
+    
+    return enhanced_info
+
+def _check_function_uses_library(func_name, lib_name, lib_data, file_path):
+    """
+    Verifica si una función usa métodos de una librería específica.
+    Implementación básica - puede ser mejorada con análisis AST más profundo.
+    """
+    try:
+        # Leer el archivo y buscar patrones de uso de la librería
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Buscar imports de la librería
+        import_patterns = [
+            f"from {lib_name} import",
+            f"import {lib_name}",
+        ]
+        
+        for pattern in import_patterns:
+            if pattern in content:
+                return [f"Uses {lib_name}"]
+        
+        return []
+    except:
+        return []
+
 # Register tools with the MCP server
 @mcp.tool
 async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
@@ -217,25 +275,48 @@ async def apply_diff_tool(path: str, blocks: list, ctx: Context = None) -> dict:
                 result["dependency_analysis"] = dependency_analysis
                 result["impact_summary"] = impact_summary
             
+            # NUEVO: Verificar si hay librerías indexadas disponibles para análisis mejorado
+            state = getattr(mcp, 'project_state', None)
+            if state and state.indexed_libraries:
+                # Enriquecer el análisis con información de librerías indexadas
+                enhanced_analysis = _enhance_dependency_analysis_with_libraries(
+                    dependency_analysis, 
+                    state.indexed_libraries,
+                    path
+                )
+                dependency_analysis.update(enhanced_analysis)
+                result["dependency_analysis"] = dependency_analysis
+            
             # Provide clear guidance to LLM with dependency information
             impact_level = dependency_analysis.get("impact_level", "low")
             files_to_review = dependency_analysis.get("files_to_review", [])
             breaking_changes = dependency_analysis.get("breaking_changes", [])
             
+            # Agregar información de librerías indexadas a las recomendaciones
+            if dependency_analysis.get("library_context"):
+                ast_recommendations.append("📚 LIBRARY CONTEXT: Modified functions use indexed libraries")
+                for lib_info in dependency_analysis["library_context"]:
+                    ast_recommendations.append(f"  • {lib_info['function']} uses {lib_info['library']}")
+            
+            # Actualizar suggested_next_action con contexto de librerías
+            library_context_summary = ""
+            if dependency_analysis.get("library_context"):
+                library_context_summary = f" Functions use {len(dependency_analysis['library_context'])} indexed libraries."
+            
             if breaking_changes and impact_level in ["critical", "high"]:
-                result["suggested_next_action"] = f"🚨 CRITICAL: Breaking changes detected affecting {len(files_to_review)} files. Review: {', '.join(files_to_review[:3])}{'...' if len(files_to_review) > 3 else ''}"
+                result["suggested_next_action"] = f"🚨 CRITICAL: Breaking changes detected affecting {len(files_to_review)} files. Review: {', '.join(files_to_review[:3])}{'...' if len(files_to_review) > 3 else ''}{library_context_summary}"
             elif ast_warnings and any(w.get("severity") == "high" for w in ast_warnings):
-                result["suggested_next_action"] = "HIGH PRIORITY: Test the changes immediately as breaking changes were detected."
+                result["suggested_next_action"] = f"HIGH PRIORITY: Test the changes immediately as breaking changes were detected.{library_context_summary}"
             elif impact_level == "high" or (impact_level == "medium" and files_to_review):
-                result["suggested_next_action"] = f"📋 MEDIUM IMPACT: Review {len(files_to_review)} affected files: {', '.join(files_to_review[:2])}{'...' if len(files_to_review) > 2 else ''}"
+                result["suggested_next_action"] = f"📋 MEDIUM IMPACT: Review {len(files_to_review)} affected files: {', '.join(files_to_review[:2])}{'...' if len(files_to_review) > 2 else ''}{library_context_summary}"
             elif ast_warnings and any(w.get("severity") == "medium" for w in ast_warnings):
-                result["suggested_next_action"] = "RECOMMENDED: Use get_code_definition to verify affected functions still work correctly."
+                result["suggested_next_action"] = f"RECOMMENDED: Use get_code_definition to verify affected functions still work correctly.{library_context_summary}"
             elif files_to_review:
-                result["suggested_next_action"] = f"✅ LOW IMPACT: {len(files_to_review)} files may be affected, but changes appear safe."
+                result["suggested_next_action"] = f"✅ LOW IMPACT: {len(files_to_review)} files may be affected, but changes appear safe.{library_context_summary}"
             elif ast_warnings:
-                result["suggested_next_action"] = "Changes applied successfully. AST analysis shows low risk."
+                result["suggested_next_action"] = f"Changes applied successfully. AST analysis shows low risk.{library_context_summary}"
             else:
-                result["suggested_next_action"] = "Changes applied successfully. No issues detected."
+                result["suggested_next_action"] = f"Changes applied successfully. No issues detected.{library_context_summary}"
     
     return result
 
@@ -342,6 +423,61 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     
     return result
 
+def _filter_library_warnings(warnings, indexed_libraries):
+    """
+    Filtra advertencias sobre definiciones que están disponibles en librerías indexadas.
+    
+    Args:
+        warnings: Lista de advertencias de dependencias
+        indexed_libraries: Dict de librerías indexadas
+        
+    Returns:
+        Dict con warnings filtradas y alternativas disponibles
+    """
+    filtered_warnings = []
+    alternatives = []
+    
+    for warning in warnings:
+        definition_name = warning.get("definition", "")
+        
+        # Verificar si esta definición está disponible en alguna librería indexada
+        available_in_library = _find_definition_in_libraries(definition_name, indexed_libraries)
+        
+        if available_in_library:
+            # No agregar la advertencia, pero registrar la alternativa
+            alternatives.append({
+                "definition": definition_name,
+                "available_in": available_in_library,
+                "original_warning": warning,
+                "replacement_suggestion": f"'{definition_name}' is available in indexed library '{available_in_library}'"
+            })
+        else:
+            # Mantener la advertencia original
+            filtered_warnings.append(warning)
+    
+    return {
+        "warnings": filtered_warnings,
+        "alternatives": alternatives
+    }
+
+def _find_definition_in_libraries(definition_name, indexed_libraries):
+    """
+    Busca si una definición está disponible en las librerías indexadas.
+    
+    Args:
+        definition_name: Nombre de la definición a buscar
+        indexed_libraries: Dict de librerías indexadas
+        
+    Returns:
+        Nombre de la librería donde está disponible, o None
+    """
+    for lib_name, lib_data in indexed_libraries.items():
+        if "definitions" in lib_data:
+            for lib_def in lib_data["definitions"]:
+                if lib_def.get("name") == definition_name:
+                    return lib_name
+    return None
+
 @mcp.tool
 def delete_file_tool(path: str, create_backup: bool = False) -> dict:
     """Delete a file with automatic dependency analysis and warnings."""
@@ -393,6 +529,15 @@ def delete_file_tool(path: str, create_backup: bool = False) -> dict:
                 "message": f"Could not analyze dependencies: {str(e)}"
             })
     
+    # NUEVO: Filtrar advertencias sobre definiciones que están disponibles en librerías indexadas
+    state = getattr(mcp, 'project_state', None)
+    if state and state.indexed_libraries:
+        filtered_warnings = _filter_library_warnings(dependency_warnings, state.indexed_libraries)
+        dependency_warnings = filtered_warnings["warnings"]
+        library_alternatives = filtered_warnings["alternatives"]
+    else:
+        library_alternatives = []
+    
     # Ejecutar eliminación
     result = delete_file(path, create_backup)
     
@@ -402,6 +547,19 @@ def delete_file_tool(path: str, create_backup: bool = False) -> dict:
         result["affected_files"] = affected_files
         result["definitions_lost"] = definitions_lost
         result["breaking_change_risk"] = len(dependency_warnings) > 0
+        result["library_alternatives"] = library_alternatives
+        
+        # Si hay alternativas de librerías, actualizar el mensaje
+        if library_alternatives:
+            alt_count = len(library_alternatives)
+            original_message = result.get("message", "")
+            result["message"] = f"{original_message} Note: {alt_count} definitions are available in indexed libraries."
+            
+            # Agregar detalles de alternativas
+            result["library_availability"] = [
+                f"{alt['definition']} -> available in {alt['available_in']}" 
+                for alt in library_alternatives
+            ]
         
         # Actualizar AST eliminando definiciones del archivo
         if path.endswith(".py"):
@@ -500,7 +658,9 @@ async def project_files_tool(
 
 def _find_identifier_usage(identifier: str, ast_index: List[Dict], definition_files: List[str]) -> List[Dict]:
     """
-    Encuentra dónde se usa un identificador en el código.
+    Encuentra dónde se usa un identificador en el código mediante análisis AST real.
+    
+    CORREGIDO: Ahora analiza el código fuente real de los archivos en lugar de solo metadatos.
     
     Args:
         identifier: Nombre del identificador a buscar
@@ -510,10 +670,13 @@ def _find_identifier_usage(identifier: str, ast_index: List[Dict], definition_fi
     Returns:
         Lista de ubicaciones donde se usa el identificador
     """
+    import ast
+    from pathlib import Path
+    
     usage_locations = []
+    processed_files = set()
     
     # Normalizar archivos de definición para comparación
-    from pathlib import Path
     normalized_def_files = set()
     for def_file in definition_files:
         try:
@@ -521,66 +684,143 @@ def _find_identifier_usage(identifier: str, ast_index: List[Dict], definition_fi
         except (OSError, ValueError):
             normalized_def_files.add(def_file)
     
-    # Buscar usos en todo el AST index
+    # Obtener lista única de archivos para analizar
+    files_to_analyze = set()
     for definition in ast_index:
-        def_file = definition.get("file", "")
+        file_path = definition.get("file", "")
+        if file_path:
+            files_to_analyze.add(file_path)
+    
+    # Funciones auxiliares para análisis AST (copiadas de dependency_analyzer.py)
+    def _is_function_call(node: ast.Call, function_name: str) -> bool:
+        """Verifica si un nodo Call es una llamada a la función especificada."""
+        if isinstance(node.func, ast.Name):
+            return node.func.id == function_name
+        elif isinstance(node.func, ast.Attribute):
+            return node.func.attr == function_name
+        return False
+    
+    def _imports_function(node: ast.ImportFrom, function_name: str) -> bool:
+        """Verifica si un import incluye la función especificada."""
+        if node.names:
+            for alias in node.names:
+                if alias.name == function_name or alias.asname == function_name:
+                    return True
+        return False
+    
+    def _get_surrounding_context(content: str, line_number: int, context_lines: int = 1) -> str:
+        """Obtiene el contexto alrededor de una línea específica."""
+        lines = content.splitlines()
+        start = max(0, line_number - context_lines - 1)
+        end = min(len(lines), line_number + context_lines)
         
-        # Normalizar archivo actual
+        context_lines_content = lines[start:end]
+        return ' | '.join(context_lines_content).strip()
+    
+    # Analizar cada archivo con AST real
+    for file_path in files_to_analyze:
         try:
-            normalized_file = str(Path(def_file).resolve()).replace('\\', '/')
-        except (OSError, ValueError):
-            normalized_file = def_file
+            # Normalizar archivo actual
+            try:
+                normalized_file = str(Path(file_path).resolve()).replace('\\', '/')
+            except (OSError, ValueError):
+                normalized_file = file_path
+            
+            # Skip archivos donde está definido el identificador
+            if normalized_file in normalized_def_files:
+                continue
+                
+            # Skip archivos ya procesados
+            if normalized_file in processed_files:
+                continue
+                
+            processed_files.add(normalized_file)
+            
+            # NUEVO: Leer y analizar el código fuente real
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            tree = ast.parse(content)
+            
+            # Buscar usos del identificador en el AST
+            for node in ast.walk(tree):
+                # Buscar llamadas de función
+                if isinstance(node, ast.Call):
+                    if _is_function_call(node, identifier):
+                        usage_locations.append({
+                            "file": file_path,
+                            "line": node.lineno,
+                            "context_name": "function_call",
+                            "context_type": "call",
+                            "usage_context": _get_surrounding_context(content, node.lineno),
+                            "confidence": "high"
+                        })
+                
+                # Buscar imports
+                elif isinstance(node, ast.ImportFrom):
+                    if _imports_function(node, identifier):
+                        usage_locations.append({
+                            "file": file_path,
+                            "line": node.lineno,
+                            "context_name": "import",
+                            "context_type": "import",
+                            "usage_context": f"Import: {identifier}",
+                            "confidence": "high"
+                        })
+                
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == identifier or alias.asname == identifier:
+                            usage_locations.append({
+                                "file": file_path,
+                                "line": node.lineno,
+                                "context_name": "import",
+                                "context_type": "import",
+                                "usage_context": f"Import: {identifier}",
+                                "confidence": "high"
+                            })
+                
+                # Buscar referencias por nombre
+                elif isinstance(node, ast.Name) and node.id == identifier:
+                    usage_locations.append({
+                        "file": file_path,
+                        "line": node.lineno,
+                        "context_name": "name_reference",
+                        "context_type": "name",
+                        "usage_context": _get_surrounding_context(content, node.lineno),
+                        "confidence": "medium"
+                    })
+                
+                # Buscar referencias por atributo (ej: pyautogui.position)
+                elif isinstance(node, ast.Attribute) and node.attr == identifier:
+                    usage_locations.append({
+                        "file": file_path,
+                        "line": node.lineno,
+                        "context_name": "attribute_reference",
+                        "context_type": "attribute",
+                        "usage_context": _get_surrounding_context(content, node.lineno),
+                        "confidence": "high"
+                    })
         
-        # Skip archivos donde está definido el identificador
-        if normalized_file in normalized_def_files:
+        except Exception as e:
+            # Log error pero continuar procesando otros archivos
+            logging.warning(f"Error analyzing {file_path} for usage of '{identifier}': {e}")
             continue
-        
-        # Buscar referencias en diferentes tipos de definiciones
-        def_type = definition.get("type", "")
-        def_name = definition.get("name", "")
-        signature = definition.get("signature", "")
-        
-        # Análisis básico: buscar el identificador en signatures y contenido
-        found_usage = False
-        usage_context = ""
-        
-        if def_type == "function":
-            # Buscar en la firma de la función (parámetros, llamadas)
-            if identifier in signature and def_name != identifier:
-                found_usage = True
-                usage_context = f"Used in function signature: {signature}"
-        
-        elif def_type == "class":
-            # Buscar en métodos de la clase
-            methods = definition.get("methods", [])
-            for method in methods:
-                method_info = method if isinstance(method, dict) else {"name": str(method)}
-                if identifier in str(method_info):
-                    found_usage = True
-                    usage_context = f"Used in class {def_name} method {method_info.get('name', 'unknown')}"
-                    break
-        
-        elif def_type == "import":
-            # Buscar si importa el identificador
-            module = definition.get("module", "")
-            from_name = definition.get("from_name", "")
-            if identifier in module or identifier in from_name:
-                found_usage = True
-                usage_context = f"Imported: {from_name or module}"
-        
-        # Si encontramos uso, agregarlo a la lista
-        if found_usage:
-            usage_locations.append({
-                "file": def_file,
-                "line": definition.get("line_start", definition.get("line")),
-                "context_name": def_name,
-                "context_type": def_type,
-                "usage_context": usage_context,
-                "confidence": "medium"  # Análisis básico = confianza media
-            })
+    
+    # Eliminar duplicados basados en archivo + línea
+    seen = set()
+    unique_usages = []
+    for usage in usage_locations:
+        key = (usage["file"], usage["line"])
+        if key not in seen:
+            seen.add(key)
+            unique_usages.append(usage)
+    
+    # Ordenar por archivo y línea
+    unique_usages.sort(key=lambda x: (x["file"], x["line"]))
     
     # Limitar resultados para evitar spam
-    return usage_locations[:20]  # Top 20 usos
+    return unique_usages[:50]  # Top 50 usos (aumentado desde 20)
 
 
 @mcp.tool
