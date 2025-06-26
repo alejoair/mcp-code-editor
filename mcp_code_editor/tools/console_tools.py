@@ -38,6 +38,27 @@ class InteractiveSubprocess:
         self._stderr_thread = None
         self._stop_reading = False
         self._output_lock = threading.Lock()
+        self.last_activity_time = time.time()
+        self.awaiting_input_patterns = [
+            r'>>>\s*$',  # Python prompt
+            r'\$\s*$',   # Shell prompt
+            r'#\s*$',    # Root shell
+            r'>\s*$',    # Windows cmd
+            r':\s*$',    # Some CLIs end with colon
+            r'\?\s*$',   # Question prompts
+        ]
+        self.background_process_patterns = [
+            r'server\s+(?:running|started|listening)',  # Server indicators
+            r'listening\s+on\s+port',                   # Port listening
+            r'serving\s+at',                            # Serving indicators
+            r'daemon\s+started',                        # Daemon processes
+            r'worker\s+ready',                          # Worker processes
+            r'Respuesta\s+desde\s+\d+',                 # Ping responses (Spanish)
+            r'Reply\s+from\s+\d+',                      # Ping responses (English)
+            r'bytes=\d+\s+tiempo=\d+ms',                # Ping timing (Spanish)
+            r'bytes=\d+\s+time=\d+ms',                  # Ping timing (English)
+            r'ping\s+statistics',                       # Ping end statistics
+        ]
         
     def start(self) -> Dict[str, Any]:
         """Start the interactive process with subprocess."""
@@ -250,7 +271,8 @@ class InteractiveSubprocess:
     
     def send_input(self, input_text: str, send_enter: bool = True, 
                   wait_for_response: bool = False, response_timeout: int = 5,
-                  expect_pattern: str = None, clear_input_echo: bool = True) -> Dict[str, Any]:
+                  expect_pattern: str = None, clear_input_echo: bool = True,
+                  force_send: bool = False) -> Dict[str, Any]:
         """Send input to the interactive process."""
         try:
             if not self.is_running or not self.process:
@@ -272,6 +294,19 @@ class InteractiveSubprocess:
                     "process_id": self.id,
                     "exit_code": self.process.poll()
                 }
+            
+            # Check if process is awaiting input (unless forced)
+            if not force_send:
+                input_state = self.is_awaiting_input()
+                if not input_state.get("awaiting_input", False) and input_state.get("confidence", 0) > 0.7:
+                    return {
+                        "success": False,
+                        "error": "ProcessNotAwaitingInput",
+                        "message": f"Process may not be waiting for input: {input_state.get('reason', 'Unknown')}",
+                        "process_id": self.id,
+                        "input_state": input_state,
+                        "suggestion": "Use force_send=True to send anyway, or check the process state"
+                    }
             
             # Record current buffer size for response detection
             initial_buffer_size = len(self.output_buffer)
@@ -428,6 +463,90 @@ class InteractiveSubprocess:
                 "message": str(e),
                 "process_id": self.id
             }
+    
+    def is_awaiting_input(self) -> Dict[str, Any]:
+        """Detect if the process is currently awaiting user input."""
+        try:
+            if not self.is_running or not self.process:
+                return {
+                    "awaiting_input": False,
+                    "reason": "Process not running",
+                    "confidence": 1.0
+                }
+            
+            # Check if process is still alive
+            if self.process.poll() is not None:
+                return {
+                    "awaiting_input": False,
+                    "reason": "Process terminated",
+                    "confidence": 1.0
+                }
+            
+            with self._output_lock:
+                if not self.output_buffer:
+                    return {
+                        "awaiting_input": False,
+                        "reason": "No output to analyze",
+                        "confidence": 0.5
+                    }
+                
+                # Get recent output (last 5 lines)
+                recent_entries = self.output_buffer[-5:]
+                recent_content = '\n'.join([entry["content"] for entry in recent_entries 
+                                          if entry["type"] in ["stdout", "stderr"]])
+                
+                # Check for background process indicators
+                for pattern in self.background_process_patterns:
+                    if re.search(pattern, recent_content, re.IGNORECASE | re.MULTILINE):
+                        return {
+                            "awaiting_input": False,
+                            "reason": f"Background process detected (pattern: {pattern})",
+                            "confidence": 0.9,
+                            "last_output": recent_content[-100:]  # Last 100 chars
+                        }
+                
+                # Check for interactive prompts
+                last_line = self.output_buffer[-1]["content"] if self.output_buffer else ""
+                for pattern in self.awaiting_input_patterns:
+                    if re.search(pattern, last_line):
+                        return {
+                            "awaiting_input": True,
+                            "reason": f"Interactive prompt detected (pattern: {pattern})",
+                            "confidence": 0.8,
+                            "prompt": last_line
+                        }
+                
+                # Check output activity
+                current_time = time.time()
+                time_since_last_output = current_time - (self.output_buffer[-1]["timestamp"] if self.output_buffer else self.start_time)
+                
+                # If no output for a while and last line looks like a prompt
+                if time_since_last_output > 2.0:  # 2 seconds of silence
+                    if last_line.strip() and not last_line.endswith('.'):
+                        # Looks like it might be waiting
+                        return {
+                            "awaiting_input": True,
+                            "reason": "Quiet period suggests waiting for input",
+                            "confidence": 0.6,
+                            "silence_duration": time_since_last_output,
+                            "last_line": last_line
+                        }
+                
+                # Default: probably not waiting for input
+                return {
+                    "awaiting_input": False,
+                    "reason": "No clear indicators of waiting for input",
+                    "confidence": 0.7,
+                    "last_output": recent_content[-100:] if recent_content else "No recent output"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error checking input state for process {self.id}: {e}")
+            return {
+                "awaiting_input": False,
+                "reason": f"Error during analysis: {str(e)}",
+                "confidence": 0.0
+            }
 
 # Global registry for active processes
 _active_processes: Dict[str, InteractiveSubprocess] = {}
@@ -515,7 +634,8 @@ def check_console(process_id: str, lines: int = 50, include_timestamps: bool = F
 
 def send_to_console(process_id: str, input_text: str, send_enter: bool = True,
                    wait_for_response: bool = False, response_timeout: int = 5,
-                   expect_pattern: str = None, clear_input_echo: bool = True) -> Dict[str, Any]:
+                   expect_pattern: str = None, clear_input_echo: bool = True,
+                   force_send: bool = False) -> Dict[str, Any]:
     """
     Send input to an interactive console process.
     
@@ -527,6 +647,7 @@ def send_to_console(process_id: str, input_text: str, send_enter: bool = True,
         response_timeout: Timeout in seconds for waiting for response
         expect_pattern: Regex pattern to wait for in response
         clear_input_echo: Whether to filter input echo from output
+        force_send: Skip input-awaiting detection and send anyway
         
     Returns:
         Dictionary with send status and response if waited
@@ -542,7 +663,7 @@ def send_to_console(process_id: str, input_text: str, send_enter: bool = True,
         
         process = _active_processes[process_id]
         return process.send_input(input_text, send_enter, wait_for_response,
-                                response_timeout, expect_pattern, clear_input_echo)
+                                response_timeout, expect_pattern, clear_input_echo, force_send)
         
     except Exception as e:
         logger.error(f"Error sending input to process {process_id}: {e}")
@@ -692,4 +813,39 @@ def cleanup_terminated_processes() -> Dict[str, Any]:
             "success": False,
             "error": type(e).__name__,
             "message": str(e)
+        }
+
+def check_console_input_state(process_id: str) -> Dict[str, Any]:
+    """
+    Check if a console process is currently awaiting user input.
+    
+    Args:
+        process_id: ID of the process to check
+        
+    Returns:
+        Dictionary with input state analysis
+    """
+    try:
+        if process_id not in _active_processes:
+            return {
+                "success": False,
+                "error": "ProcessNotFound",
+                "message": f"Process {process_id} not found",
+                "available_processes": list(_active_processes.keys())
+            }
+        
+        process = _active_processes[process_id]
+        result = process.is_awaiting_input()
+        result["success"] = True
+        result["process_id"] = process_id
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error checking input state for process {process_id}: {e}")
+        return {
+            "success": False,
+            "error": type(e).__name__,
+            "message": str(e),
+            "process_id": process_id
         }
