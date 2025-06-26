@@ -21,8 +21,8 @@ from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines
                                        setup_code_editor_with_ast, search_definitions, get_file_definitions,
                                        update_file_ast_index, has_structural_changes,
                                        index_library, search_library, get_indexed_libraries, get_library_summary,
-                                       start_console_process, check_console, send_to_console, list_console_processes,
-                                       terminate_console_process, cleanup_terminated_processes)
+                                        start_console_process, check_console, send_to_console, list_console_processes,
+                                        terminate_console_process, cleanup_terminated_processes)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -59,10 +59,12 @@ mcp = FastMCP(
     • create_file: Create new files with content and backup support
     • delete_file: Delete files with optional backup creation
     
-    🖥️ CONSOLE INTEGRATION:
-    • start_console_process: Start interactive console processes (npm, python, etc.)
+    🖥️ CONSOLE INTEGRATION (with intelligent input detection):
+    • start_console_process: Start interactive console processes
+      BEST PRACTICES: Use 'python -u -i' for Python, 'node' for Node.js, 'cmd' for Windows
     • check_console: Get snapshot of console output (requires wait_seconds parameter)
-    • send_to_console: Send input to interactive console processes
+    • send_to_console: Send input with smart detection - automatically prevents sending
+      commands to background processes. Use force_send=True for control signals (Ctrl+C)
     • list_console_processes: List and manage active console processes
     • terminate_console_process: Stop running console processes
     
@@ -75,12 +77,16 @@ mcp.project_state = ProjectState()
 
 # Register tools with the MCP server
 @mcp.tool
-async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], ctx: Context = None) -> dict:
+async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool = False, ctx: Context = None) -> dict:
     """
     ✏️ INTELLIGENT FILE MODIFICATION: Apply precise changes with automatic dependency analysis.
     
+    🛡️ SMART PROTECTION: This tool automatically blocks critical breaking changes that could
+    damage your codebase. Use force=True only when you're certain about the changes.
+    
     This tool combines precise diff application with advanced AST analysis to:
     • Detect breaking changes before they happen
+    • BLOCK critical changes that could break multiple files
     • Identify affected functions and callers automatically  
     • Provide safety recommendations and impact warnings
     • Suggest files to review after modifications
@@ -106,6 +112,9 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], ctx: Context 
     Args:
         path: File path to modify
         blocks: List of diff block dictionaries (see structure above)
+        force: ADVANCED - Skip breaking change protection and apply changes anyway.
+               By default, critical breaking changes are blocked to prevent accidental
+               damage to the codebase. Set to True to bypass this safety mechanism.
         ctx: MCP context (optional)
         
     Returns:
@@ -195,6 +204,27 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], ctx: Context 
                 dependency_analysis = {}
                 impact_summary = {}
     
+    # Check for critical breaking changes (unless forced)
+    if not force and dependency_analysis.get("breaking_changes"):
+        breaking_changes = dependency_analysis["breaking_changes"]
+        impact_level = dependency_analysis.get("impact_level", "low")
+        
+        # Block critical and high-impact breaking changes
+        if impact_level in ["critical", "high"]:
+            affected_files = dependency_analysis.get("files_to_review", [])
+            return {
+                "success": False,
+                "error": "BREAKING_CHANGES_DETECTED",
+                "message": f"Breaking changes detected affecting {len(affected_files)} files. This could break existing functionality.",
+                "breaking_changes": breaking_changes,
+                "affected_files": affected_files,
+                    "impact_level": impact_level,
+                    "ast_warnings": ast_warnings,
+                    "dependency_analysis": dependency_analysis,
+                    "suggested_action": "Fix the breaking changes first, or use force=True to apply anyway (not recommended).",
+                    "recommendation": "Review and update all affected callers before applying this change."
+                }
+    
     # Apply the diff
     result = apply_diff(path, blocks)
     
@@ -223,19 +253,19 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], ctx: Context 
             breaking_changes = dependency_analysis.get("breaking_changes", [])
             
             if breaking_changes and impact_level in ["critical", "high"]:
-                result["suggested_next_action"] = f"🚨 CRITICAL: Breaking changes detected affecting {len(files_to_review)} files. Review: {', '.join(files_to_review[:3])}{'...' if len(files_to_review) > 3 else ''}"
+                result["suggested_next_action"] = f"🚨 BREAKING CHANGES APPLIED: Immediately test {len(files_to_review)} affected files: {', '.join(files_to_review[:3])}{'...' if len(files_to_review) > 3 else ''}"
             elif ast_warnings and any(w.get("severity") == "high" for w in ast_warnings):
-                result["suggested_next_action"] = "HIGH PRIORITY: Test the changes immediately as breaking changes were detected."
+                result["suggested_next_action"] = "⚠️ HIGH RISK CHANGES APPLIED: Test immediately - breaking changes detected."
             elif impact_level == "high" or (impact_level == "medium" and files_to_review):
-                result["suggested_next_action"] = f"📋 MEDIUM IMPACT: Review {len(files_to_review)} affected files: {', '.join(files_to_review[:2])}{'...' if len(files_to_review) > 2 else ''}"
+                result["suggested_next_action"] = f"📋 MEDIUM IMPACT APPLIED: Verify {len(files_to_review)} affected files: {', '.join(files_to_review[:2])}{'...' if len(files_to_review) > 2 else ''}"
             elif ast_warnings and any(w.get("severity") == "medium" for w in ast_warnings):
-                result["suggested_next_action"] = "RECOMMENDED: Use get_code_definition to verify affected functions still work correctly."
+                result["suggested_next_action"] = "✅ CHANGES APPLIED: Use get_code_definition to verify affected functions still work correctly."
             elif files_to_review:
-                result["suggested_next_action"] = f"✅ LOW IMPACT: {len(files_to_review)} files may be affected, but changes appear safe."
+                result["suggested_next_action"] = f"✅ CHANGES APPLIED: {len(files_to_review)} files may be affected, but changes appear safe."
             elif ast_warnings:
-                result["suggested_next_action"] = "Changes applied successfully. AST analysis shows low risk."
+                result["suggested_next_action"] = "✅ Changes applied successfully. AST analysis shows low risk."
             else:
-                result["suggested_next_action"] = "Changes applied successfully. No issues detected."
+                result["suggested_next_action"] = "✅ Changes applied successfully. No issues detected."
     
     return result
 
@@ -936,8 +966,19 @@ async def start_console_process_tool(
     """
     Start an interactive console process.
     
+    RECOMMENDED COMMANDS for best compatibility:
+    - Python interactive: Use 'python -u -i' (unbuffered + interactive mode)
+    - Node.js REPL: Use 'node' (works out of the box)
+    - Command Prompt: Use 'cmd' (Windows) or 'bash' (Unix)
+    - PowerShell: Use 'powershell' (Windows)
+    
+    TROUBLESHOOTING:
+    - If Python doesn't show output: Add '-u -i' flags
+    - If process seems frozen: Check if it's waiting for input vs running
+    - Use send_to_console with force_send=True for background processes
+    
     Args:
-        command: The command to execute
+        command: The command to execute (see recommended commands above)
         working_dir: Working directory for the process (optional)
         env_vars: Additional environment variables (optional)
         name: Descriptive name for the process (optional)
@@ -1025,10 +1066,22 @@ async def send_to_console_tool(
     response_timeout: int = 5,
     expect_pattern: str = None,
     clear_input_echo: bool = True,
+    force_send: bool = False,
     ctx: Context = None
 ) -> dict:
     """
-    Send input to an interactive console process.
+    Send input to an interactive console process with intelligent input detection.
+    
+    SMART BEHAVIOR: This tool automatically detects if the process is currently
+    awaiting user input (interactive prompt like >>>, $, >) vs running in background
+    (servers, long tasks). If the process is NOT awaiting input, it will return an
+    error instead of sending a command that would be ignored.
+    
+    Examples:
+    - python (shows >>> prompt) -> Commands are sent normally
+    - python -m http.server 8000 (serving) -> Error returned, suggests using force_send
+    - cmd (shows prompt) -> Commands are sent normally
+    - ping google.com (running) -> Error returned unless force_send=True
     
     Args:
         process_id: ID of the process to send input to
@@ -1038,6 +1091,12 @@ async def send_to_console_tool(
         response_timeout: Timeout in seconds for waiting for response
         expect_pattern: Regex pattern to wait for in response
         clear_input_echo: Whether to filter input echo from output
+        force_send: ADVANCED - Skip smart detection and force send input even if process
+                   may not be awaiting input. By default, the tool intelligently detects
+                   if the process is waiting for input (interactive prompt) vs running in
+                   background (servers, long tasks) to prevent sending useless commands.
+                   Set to True to bypass this protection when you need to send control
+                   signals (Ctrl+C), interrupt processes, or handle special cases.
         
     Returns:
         Dictionary with send status and response if waited
@@ -1047,7 +1106,7 @@ async def send_to_console_tool(
         
         result = send_to_console(process_id, input_text, send_enter, 
                                wait_for_response, response_timeout, 
-                               expect_pattern, clear_input_echo)
+                               expect_pattern, clear_input_echo, force_send)
         
         if result.get("success"):
             if result.get("response_received"):
