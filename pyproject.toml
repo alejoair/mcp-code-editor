@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-code-editor"
-version = "0.1.13"
+version = "0.1.14"
 authors = [
     {name = "MCP Code Editor Team", email = "mcpcodeeditor@example.com"},
 ]
@@ -58,7 +58,7 @@ include-package-data = true
 
 # Configuration for bump2version
 [tool.bumpversion]
-current_version = "0.1.13"
+current_version = "0.1.14"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 search = "{current_version}"
