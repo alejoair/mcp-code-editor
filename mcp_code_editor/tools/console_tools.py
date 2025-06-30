@@ -404,8 +404,99 @@ class InteractiveSubprocess:
             "wait_time": time.time() - start_time
         }
     
+    def _find_child_processes(self, parent_pid: int) -> List[int]:
+        """Find all child processes of a given parent process ID."""
+        try:
+            child_pids = []
+            if sys.platform == "win32":
+                # Windows implementation using wmic
+                result = subprocess.run(
+                    ["wmic", "process", "where", f"ParentProcessId={parent_pid}", "get", "ProcessId"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line and line.isdigit():
+                            child_pids.append(int(line))
+            else:
+                # Unix/Linux implementation using ps
+                result = subprocess.run(
+                    ["ps", "--ppid", str(parent_pid), "-o", "pid", "--no-headers"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        line = line.strip()
+                        if line and line.isdigit():
+                            child_pids.append(int(line))
+            
+            return child_pids
+        except Exception as e:
+            logger.warning(f"Error finding child processes for PID {parent_pid}: {e}")
+            return []
+    
+    def _terminate_process_tree(self, pid: int, force: bool = False, timeout: int = 5) -> Dict[str, Any]:
+        """Terminate a process and all its children recursively."""
+        terminated_pids = []
+        failed_pids = []
+        
+        try:
+            # Find all child processes first
+            child_pids = self._find_child_processes(pid)
+            
+            # Recursively terminate children first
+            for child_pid in child_pids:
+                child_result = self._terminate_process_tree(child_pid, force, timeout)
+                terminated_pids.extend(child_result.get("terminated_pids", []))
+                failed_pids.extend(child_result.get("failed_pids", []))
+            
+            # Now terminate the parent process
+            try:
+                if sys.platform == "win32":
+                    # Windows implementation
+                    if force:
+                        subprocess.run(["taskkill", "/PID", str(pid), "/F"], 
+                                     check=True, timeout=timeout)
+                    else:
+                        subprocess.run(["taskkill", "/PID", str(pid)], 
+                                     check=True, timeout=timeout)
+                else:
+                    # Unix/Linux implementation
+                    sig = signal.SIGKILL if force else signal.SIGTERM
+                    os.kill(pid, sig)
+                    
+                terminated_pids.append(pid)
+                logger.info(f"Successfully terminated PID {pid}")
+                
+            except subprocess.CalledProcessError as e:
+                if "not found" in str(e).lower() or "no such process" in str(e).lower():
+                    # Process already terminated
+                    logger.info(f"PID {pid} was already terminated")
+                    terminated_pids.append(pid)
+                else:
+                    logger.error(f"Failed to terminate PID {pid}: {e}")
+                    failed_pids.append(pid)
+            except ProcessLookupError:
+                # Process already terminated (Unix)
+                logger.info(f"PID {pid} was already terminated")
+                terminated_pids.append(pid)
+            except Exception as e:
+                logger.error(f"Failed to terminate PID {pid}: {e}")
+                failed_pids.append(pid)
+                
+        except Exception as e:
+            logger.error(f"Error in process tree termination for PID {pid}: {e}")
+            failed_pids.append(pid)
+        
+        return {
+            "terminated_pids": terminated_pids,
+            "failed_pids": failed_pids
+        }
+    
     def terminate(self, force: bool = False, timeout: int = 10) -> Dict[str, Any]:
-        """Terminate the interactive process."""
+        """Terminate the interactive process and all its children."""
         try:
             if not self.process:
                 return {
@@ -418,42 +509,73 @@ class InteractiveSubprocess:
             self.is_running = False
             self.end_time = time.time()
             
+            process_pid = self.process.pid
             exit_code = None
+            action = "terminated"
             
-            if force:
-                # Force kill immediately
-                self.process.kill()
-                action = "killed"
-            else:
-                # Try graceful termination first
-                self.process.terminate()
-                action = "terminated"
-                
-                # Wait for process to finish gracefully
+            # First, try to terminate process tree using system tools
+            tree_result = self._terminate_process_tree(process_pid, force, timeout//2)
+            terminated_pids = tree_result.get("terminated_pids", [])
+            failed_pids = tree_result.get("failed_pids", [])
+            
+            # If system-level termination worked, clean up our subprocess object
+            if process_pid in terminated_pids:
                 try:
-                    exit_code = self.process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    # Force kill if graceful termination failed
+                    # Process was terminated by system call, just poll for exit code
+                    exit_code = self.process.poll()
+                    if exit_code is None:
+                        # Give it a moment to finish
+                        time.sleep(0.5)
+                        exit_code = self.process.poll()
+                    action = "force killed" if force else "terminated"
+                except Exception:
+                    pass
+            else:
+                # Fallback to subprocess methods if system termination failed
+                if force:
+                    # Force kill immediately
                     self.process.kill()
-                    action = "force killed after timeout"
+                    action = "killed"
+                else:
+                    # Try graceful termination first
+                    self.process.terminate()
+                    action = "terminated"
+                    
+                    # Wait for process to finish gracefully
                     try:
-                        exit_code = self.process.wait(timeout=2)
+                        exit_code = self.process.wait(timeout=timeout//2)
                     except subprocess.TimeoutExpired:
-                        pass
+                        # Force kill if graceful termination failed
+                        self.process.kill()
+                        action = "force killed after timeout"
+                        try:
+                            exit_code = self.process.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            pass
             
             if exit_code is None:
                 exit_code = self.process.poll()
             
-            logger.info(f"Process {self.id} {action} (exit code: {exit_code})")
-            
-            return {
+            # Prepare detailed result
+            result = {
                 "success": True,
                 "process_id": self.id,
                 "action": action,
                 "exit_code": exit_code,
                 "uptime_seconds": self.end_time - self.start_time,
+                "terminated_pids": terminated_pids,
+                "failed_pids": failed_pids,
+                "total_terminated": len(terminated_pids),
                 "message": f"Process {action} successfully"
             }
+            
+            if failed_pids:
+                result["warning"] = f"Failed to terminate {len(failed_pids)} child processes: {failed_pids}"
+                logger.warning(f"Process {self.id} terminated but some children failed: {failed_pids}")
+            else:
+                logger.info(f"Process {self.id} and all children {action} (exit code: {exit_code})")
+            
+            return result
             
         except Exception as e:
             logger.error(f"Error terminating process {self.id}: {e}")
