@@ -21,6 +21,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Universal newline normalization
+def normalize_to_unix_newlines(text: str) -> str:
+    """Normalize ALL text to use Unix-style \n newlines universally."""
+    if not text:
+        return text
+    
+    # Replace all variations of line endings with \n
+    text = text.replace('\r\n', '\n')  # Windows CRLF -> LF
+    text = text.replace('\r', '\n')    # Mac CR -> LF
+    text = text.replace('\n\n', '\n')  # Remove double newlines that might be created
+    
+    return text
+
 # Platform and environment detection utilities
 def detect_environment() -> Dict[str, Any]:
     """Detect the current execution environment and console type."""
@@ -114,6 +127,9 @@ def clean_text_output(text: str, env_info: Dict[str, Any] = None) -> str:
     if env_info is None:
         env_info = detect_environment()
     
+    # ALWAYS normalize to Unix newlines universally first
+    text = normalize_to_unix_newlines(text)
+    
     # Remove problematic control characters
     # Keep only printable characters and common whitespace
     import string
@@ -121,8 +137,6 @@ def clean_text_output(text: str, env_info: Dict[str, Any] = None) -> str:
     
     # For WSL and SSH, be more aggressive with cleaning
     if env_info.get("needs_special_handling", False):
-        # Remove carriage returns that cause issues
-        text = text.replace('\r\n', '\n').replace('\r', '')
         
         # Remove ANSI escape sequences that might cause issues
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -156,8 +170,8 @@ def clean_text_input(text: str, env_info: Dict[str, Any] = None) -> str:
     if env_info is None:
         env_info = detect_environment()
     
-    # Always clean carriage returns since they cause issues universally
-    text = text.replace('\r\n', '\n').replace('\r', '')
+    # ALWAYS normalize to Unix newlines universally
+    text = normalize_to_unix_newlines(text)
     
     # For WSL and other special environments, be more aggressive
     if env_info.get("needs_special_handling", False):
@@ -186,8 +200,9 @@ def get_subprocess_config(env_info: Dict[str, Any] = None) -> Dict[str, Any]:
     config = {
         "text": True,
         "bufsize": 0,  # Unbuffered
-        "universal_newlines": False,  # We'll handle newlines manually
+        "universal_newlines": False,  # We'll handle newlines manually to force \n
         "encoding": "utf-8",
+        "newline": '\n',  # Force Unix-style line endings everywhere
         "errors": "replace",  # Replace invalid characters instead of failing
     }
     
@@ -198,13 +213,15 @@ def get_subprocess_config(env_info: Dict[str, Any] = None) -> Dict[str, Any]:
             "encoding": "utf-8",
             "errors": "replace",
             "universal_newlines": False,
+            "newline": '\n',  # Force Unix line endings for WSL/SSH/Docker
         })
     
-    # Windows-specific adjustments
+    # Windows-specific adjustments - but still use \n universally
     if env_info.get("is_windows", False) and not env_info.get("is_wsl", False):
         config.update({
-            "encoding": "cp1252",
-            "universal_newlines": True,
+            "encoding": "utf-8",  # Use UTF-8 universally
+            "universal_newlines": False,  # Handle newlines manually
+            "newline": '\n',  # Force \n even on Windows
         })
     
     return config
