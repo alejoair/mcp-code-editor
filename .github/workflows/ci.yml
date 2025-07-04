@@ -30,19 +30,14 @@ jobs:
         # Get version from __init__.py
         INIT_VERSION=$(python -c "import sys; sys.path.insert(0, '.'); import mcp_code_editor; print(mcp_code_editor.__version__)")
         
-        # Get version from .bumpversion.cfg
-        BUMP_VERSION=$(grep "^current_version" .bumpversion.cfg | head -1 | cut -d'=' -f2 | tr -d ' ')
-        
         echo "📦 pyproject.toml version: $PYPROJECT_VERSION"
         echo "🐍 __init__.py version: $INIT_VERSION"
-        echo "🔄 .bumpversion.cfg version: $BUMP_VERSION"
         
-        if [ "$PYPROJECT_VERSION" = "$INIT_VERSION" ] && [ "$PYPROJECT_VERSION" = "$BUMP_VERSION" ]; then
+        if [ "$PYPROJECT_VERSION" = "$INIT_VERSION" ]; then
           echo "✅ All versions are consistent: $PYPROJECT_VERSION"
         else
           echo "❌ Version mismatch detected!"
           echo "  pyproject.toml: $PYPROJECT_VERSION"
           echo "  __init__.py: $INIT_VERSION"
-          echo "  .bumpversion.cfg: $BUMP_VERSION"
           exit 1
         fi
