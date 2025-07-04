@@ -25,7 +25,7 @@ from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines
                                         terminate_console_process, cleanup_terminated_processes)
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Import Context for state management
@@ -1350,7 +1350,9 @@ async def start_console_process_tool(
     
     Args:
         command: The command to execute (see recommended commands above)
-        working_dir: Working directory for the process (optional)
+        working_dir: Working directory for the process (optional). 
+                    If provided, the command will execute from this directory.
+                    If not provided, uses the terminal's default directory.
         env_vars: Additional environment variables (optional)
         name: Descriptive name for the process (optional)
         shell: Whether to use shell for execution (optional)

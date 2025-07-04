@@ -13,11 +13,186 @@ import signal
 import sys
 import re
 import queue
+import shutil
+import platform
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Set up console debugging if needed
+if os.environ.get('MCP_DEBUG_CONSOLE', '').lower() in ('1', 'true', 'yes'):
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+
+# Universal newline normalization
+def normalize_to_unix_newlines(text: str) -> str:
+    """Normalize ALL text to use Unix-style \n newlines universally."""
+    if not text:
+        return text
+    
+    # Replace all variations of line endings with \n
+    text = text.replace('\r\n', '\n')  # Windows CRLF -> LF
+    text = text.replace('\r', '\n')    # Mac CR -> LF
+    text = text.replace('\n\n', '\n')  # Remove double newlines that might be created
+    
+    return text
+
+# Platform and environment detection utilities
+def detect_environment() -> Dict[str, Any]:
+    """Detect the current execution environment and console type."""
+    env_info = {
+        "platform": platform.system().lower(),
+        "is_windows": sys.platform == "win32",
+        "is_wsl": False,
+        "is_ssh": False,
+        "is_docker": False,
+        "shell_type": "unknown",
+        "encoding": "utf-8",
+        "line_ending": "\n",
+        "needs_special_handling": False
+    }
+    
+    # Detect WSL
+    try:
+        if env_info["platform"] == "linux":
+            # Check for WSL in multiple ways
+            wsl_indicators = [
+                "/proc/version",  # Contains "Microsoft" or "WSL"
+                "/proc/sys/fs/binfmt_misc/WSLInterop",  # WSL2 specific
+            ]
+            
+            for indicator in wsl_indicators:
+                try:
+                    if os.path.exists(indicator):
+                        with open(indicator, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read().lower()
+                            if 'microsoft' in content or 'wsl' in content:
+                                env_info["is_wsl"] = True
+                                env_info["needs_special_handling"] = True
+                                break
+                except (OSError, IOError):
+                    continue
+            
+            # Additional WSL detection via environment variables
+            if not env_info["is_wsl"]:
+                wsl_env_vars = ["WSL_DISTRO_NAME", "WSL_INTEROP", "WSLENV"]
+                if any(var in os.environ for var in wsl_env_vars):
+                    env_info["is_wsl"] = True
+                    env_info["needs_special_handling"] = True
+    except Exception as e:
+        logger.debug(f"Error detecting WSL: {e}")
+    
+    # Detect SSH session
+    ssh_indicators = ["SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY"]
+    if any(var in os.environ for var in ssh_indicators):
+        env_info["is_ssh"] = True
+        env_info["needs_special_handling"] = True
+    
+    # Detect Docker
+    docker_indicators = [
+        os.path.exists("/.dockerenv"),
+        "container" in os.environ.get("HOSTNAME", "").lower(),
+        os.path.exists("/proc/1/cgroup") and "docker" in open("/proc/1/cgroup", "r").read()
+    ]
+    if any(docker_indicators):
+        env_info["is_docker"] = True
+        env_info["needs_special_handling"] = True
+    
+    # Determine shell type
+    shell = os.environ.get("SHELL", "").lower()
+    if "bash" in shell:
+        env_info["shell_type"] = "bash"
+    elif "zsh" in shell:
+        env_info["shell_type"] = "zsh"
+    elif "fish" in shell:
+        env_info["shell_type"] = "fish"
+    elif "powershell" in shell or "pwsh" in shell:
+        env_info["shell_type"] = "powershell"
+    elif env_info["is_windows"]:
+        env_info["shell_type"] = "cmd"
+    
+    # Set platform-specific defaults
+    if env_info["is_windows"]:
+        env_info["encoding"] = "cp1252"  # Common Windows encoding
+        env_info["line_ending"] = "\r\n"
+    elif env_info["is_wsl"]:
+        env_info["encoding"] = "utf-8"
+        env_info["line_ending"] = "\n"
+        env_info["needs_special_handling"] = True
+    
+    return env_info
+
+def clean_text_output(text: str) -> str:
+    """Clean text output for better console compatibility."""
+    if not text:
+        return text
+    
+    # Normalize to Unix newlines
+    text = normalize_to_unix_newlines(text)
+    
+    # Remove ANSI escape sequences
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    text = ansi_escape.sub('', text)
+    
+    # Remove problematic control characters
+    text = text.replace('\x00', '').replace('\x08', '')
+    
+    # Clean up lines - remove trailing whitespace
+    lines = text.split('\n')
+    cleaned_lines = [line.rstrip() for line in lines]
+    
+    # Remove trailing empty lines
+    while cleaned_lines and not cleaned_lines[-1]:
+        cleaned_lines.pop()
+    
+    return '\n'.join(cleaned_lines)
+
+def clean_text_input(text: str) -> bytes:
+    """Clean text input and convert to UTF-8 bytes for sending to console."""
+    if not text:
+        return b''
+    
+    # Clean problematic characters
+    text = text.replace('\r', '')
+    text = text.replace('\\r', '').replace('\\n', '\n').replace('\\t', '\t')
+    text = text.replace('\\\\r', '').replace('\\\\n', '\n')
+    
+    # Normalize to Unix newlines and remove control chars
+    text = normalize_to_unix_newlines(text)
+    text = ''.join(char for char in text if ord(char) >= 32 or char in ['\n', '\t'])
+    
+    # Convert to bytes
+    return text.encode('utf-8')
+
+def get_subprocess_config(env_info: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Get optimized subprocess configuration for the current environment."""
+    if env_info is None:
+        env_info = detect_environment()
+    
+    # Use binary mode to avoid automatic newline conversion
+    config = {
+        "text": False,  # Use binary mode to control newlines exactly
+        "bufsize": 0,  # Unbuffered
+    }
+    
+    # Add Windows-specific configuration for better WSL support
+    if env_info.get("is_windows", False):
+        config.update({
+            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0,
+            "startupinfo": subprocess.STARTUPINFO() if hasattr(subprocess, 'STARTUPINFO') else None
+        })
+        
+        # Configure startup info to hide console window for better control
+        if config["startupinfo"]:
+            config["startupinfo"].dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            config["startupinfo"].wShowWindow = subprocess.SW_HIDE
+    
+    return config
 
 class InteractiveSubprocess:
     """Manages an interactive console process using subprocess with threading."""
@@ -30,6 +205,13 @@ class InteractiveSubprocess:
         self.env = env or os.environ.copy()
         self.process = None
         self.output_buffer = []
+        
+        # Detect environment for optimized handling
+        self.env_info = detect_environment()
+        logger.info(f"Environment detected for process {self.id}: {self.env_info}")
+        
+        # Get subprocess configuration optimized for this environment
+        self.subprocess_config = get_subprocess_config(self.env_info)
         self.start_time = time.time()
         self.end_time = None
         self.is_running = False
@@ -82,19 +264,25 @@ class InteractiveSubprocess:
                 cmd = self.command
                 shell = False
             
-            # Start subprocess
-            self.process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=0,  # Unbuffered for real-time output
-                cwd=self.working_dir,
-                env=self.env,
-                shell=shell,
-                universal_newlines=True
-            )
+            # Start subprocess with optimized configuration
+            subprocess_kwargs = {
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "env": self.env,
+                "shell": shell,
+            }
+            
+            # Set working directory if provided
+            if self.working_dir:
+                subprocess_kwargs["cwd"] = self.working_dir
+                logger.debug(f"Setting working directory: {self.working_dir}")
+            else:
+                logger.debug(f"No working directory specified, using default")
+            
+            subprocess_kwargs.update(self.subprocess_config)
+            
+            self.process = subprocess.Popen(cmd, **subprocess_kwargs)
             
             self.is_running = True
             self._stop_reading = False
@@ -133,12 +321,19 @@ class InteractiveSubprocess:
             try:
                 while not self._stop_reading and self.is_running and self.process:
                     try:
-                        line = self.process.stdout.readline()
-                        if line:
+                        line_bytes = self.process.stdout.readline()
+                        if line_bytes:
+                            line = line_bytes.decode('utf-8', errors='replace')
+                            # Debug logging for WSL issues
+                            logger.debug(f"[{self.id}] Raw stdout: {repr(line_bytes[:100])}")
+                            
                             with self._output_lock:
+                                cleaned_line = clean_text_output(line)
+                                logger.debug(f"[{self.id}] Cleaned stdout: {repr(cleaned_line)}")
+                                
                                 self.output_buffer.append({
                                     "timestamp": time.time(),
-                                    "content": line.rstrip('\n\r'),
+                                    "content": cleaned_line,
                                     "type": "stdout",
                                     "raw": False
                                 })
@@ -161,12 +356,19 @@ class InteractiveSubprocess:
             try:
                 while not self._stop_reading and self.is_running and self.process:
                     try:
-                        line = self.process.stderr.readline()
-                        if line:
+                        line_bytes = self.process.stderr.readline()
+                        if line_bytes:
+                            line = line_bytes.decode('utf-8', errors='replace')
+                            # Debug logging for WSL issues
+                            logger.debug(f"[{self.id}] Raw stderr: {repr(line_bytes[:100])}")
+                            
                             with self._output_lock:
+                                cleaned_line = clean_text_output(line)
+                                logger.debug(f"[{self.id}] Cleaned stderr: {repr(cleaned_line)}")
+                                
                                 self.output_buffer.append({
                                     "timestamp": time.time(),
-                                    "content": line.rstrip('\n\r'),
+                                    "content": cleaned_line,
                                     "type": "stderr",
                                     "raw": False
                                 })
@@ -311,9 +513,18 @@ class InteractiveSubprocess:
             # Record current buffer size for response detection
             initial_buffer_size = len(self.output_buffer)
             
-            # Send the input
-            input_to_send = input_text + ('\n' if send_enter else '')
-            self.process.stdin.write(input_to_send)
+            # DEBUG: Log what we're actually receiving
+            logger.error(f"DEBUG - Raw input received: {repr(input_text)}")
+            
+            # Clean input and convert to bytes
+            input_bytes = clean_text_input(input_text)
+            if send_enter and not input_bytes.endswith(b'\n'):
+                input_bytes += b'\n'
+            
+            logger.error(f"DEBUG - Final bytes to send: {repr(input_bytes)}")
+            
+            # Write bytes directly
+            self.process.stdin.write(input_bytes)
             self.process.stdin.flush()
             
             # Log the input to our buffer for reference
@@ -339,8 +550,7 @@ class InteractiveSubprocess:
                 )
                 result.update(response_data)
             
-            logger.info(f"Sent input to process {self.id}: {input_text}")
-            
+
             return result
             
         except BrokenPipeError:
@@ -464,7 +674,11 @@ class InteractiveSubprocess:
                                      check=True, timeout=timeout)
                 else:
                     # Unix/Linux implementation
-                    sig = signal.SIGKILL if force else signal.SIGTERM
+                    if hasattr(signal, 'SIGKILL'):
+                        sig = signal.SIGKILL if force else signal.SIGTERM
+                    else:
+                        # Windows fallback
+                        sig = signal.SIGTERM
                     os.kill(pid, sig)
                     
                 terminated_pids.append(pid)
