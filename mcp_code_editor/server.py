@@ -443,7 +443,7 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     • Enhanced metadata for code navigation
     
     Args:
-        path: File path to read
+        path: Absolute file path to read (relative paths not supported)
         start_line: Optional starting line number (1-indexed)
         end_line: Optional ending line number (inclusive)
         

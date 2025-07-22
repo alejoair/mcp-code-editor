@@ -102,6 +102,10 @@ def read_file_with_lines(path: str, start_line: Optional[int] = None, end_line: 
     try:
         file_path = Path(path)
         
+        # Validate that the path is absolute
+        if not file_path.is_absolute():
+            raise ValueError(f"Path must be absolute, got relative path: {path}")
+        
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         
