@@ -1,23 +1,17 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MCP Code Editor - AI-Powered Code Editing Tools</title>
-    <meta name="description" content="A powerful FastMCP server providing advanced code editing tools with AI-first architecture. Compatible with Termux and cross-platform.">
-    
-    <!-- Fonts -->
+    <title>MCP Code Editor - Herramientas de Edición de Código con IA</title>
+    <meta name="description" content="Servidor MCP avanzado que proporciona herramientas de edición de código inteligentes con análisis AST, gestión de proyectos e integración de consola.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    
-    <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
     <link rel="stylesheet" href="./css/styles.css">
 </head>
 <body>
-    <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
             <div class="nav-brand">
@@ -25,9 +19,9 @@
                 <span>MCP Code Editor</span>
             </div>
             <ul class="nav-menu">
-                <li><a href="#features" class="nav-link">Features</a></li>
-                <li><a href="#tools" class="nav-link">Tools</a></li>
-                <li><a href="#installation" class="nav-link">Installation</a></li>
+                <li><a href="#features" class="nav-link">Características</a></li>
+                <li><a href="#benefits" class="nav-link">Beneficios</a></li>
+                <li><a href="#installation" class="nav-link">Instalación</a></li>
                 <li><a href="https://github.com/alejoair/mcp-code-editor" class="nav-link" target="_blank">
                     <i class="fab fa-github"></i>
                 </a></li>
@@ -40,7 +34,6 @@
         </div>
     </nav>
 
-    <!-- Hero Section -->
     <section class="hero">
         <div class="hero-background">
             <div class="code-particles"></div>
@@ -49,138 +42,311 @@
             <div class="hero-content">
                 <div class="hero-badge">
                     <i class="fas fa-rocket"></i>
-                    <span>AI-First Architecture</span>
+                    <span>Arquitectura IA-First</span>
                 </div>
                 <h1 class="hero-title">
-                    Transform Code Editing with
-                    <span class="gradient-text">AI Intelligence</span>
+                    Edición de Código Inteligente con
+                    <span class="gradient-text">Análisis AST</span>
                 </h1>
                 <p class="hero-description">
-                    A powerful FastMCP server providing advanced code editing tools with AST analysis, 
-                    smart search, and seamless AI integration. Compatible with Termux and cross-platform.
+                    <strong>AST (Abstract Syntax Tree)</strong> significa que Claude entiende tu código como un árbol estructural, no solo texto. 
+                    Resultado: Claude hace modificaciones precisas, búsqueda contextual y cero errores de sintaxis. Ve tu código como tú lo piensas.
                 </p>
                 <div class="hero-stats">
                     <div class="stat">
-                        <div class="stat-number">500+</div>
-                        <div class="stat-label">Downloads</div>
-                    </div>
-                    <div class="stat">
                         <div class="stat-number">15+</div>
-                        <div class="stat-label">Tools</div>
+                        <div class="stat-label">Herramientas</div>
                     </div>
                     <div class="stat">
                         <div class="stat-number">100%</div>
                         <div class="stat-label">Python</div>
                     </div>
+                    <div class="stat">
+                        <div class="stat-number">MIT</div>
+                        <div class="stat-label">Licencia</div>
+                    </div>
                 </div>
                 <div class="hero-actions">
                     <a href="#installation" class="btn btn-primary">
                         <i class="fas fa-download"></i>
-                        Get Started
+                        Instalar Ahora
                     </a>
                     <a href="https://github.com/alejoair/mcp-code-editor" class="btn btn-secondary" target="_blank">
                         <i class="fab fa-github"></i>
-                        View Source
+                        Ver Código
                     </a>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Features Section -->
     <section id="features" class="features">
         <div class="container">
             <div class="section-header">
-                <h2>Powerful Features for Modern Development</h2>
-                <p>Built with AI-first architecture and cutting-edge technology</p>
+                <h2>Características que Transforman tu Desarrollo</h2>
+                <p>Potencia tu productividad con herramientas inteligentes de última generación</p>
+                <div class="ast-explanation">
+                    <div class="ast-visual">
+                        <div class="code-example">function add(a, b) { return a + b; }</div>
+                        <div class="arrow">→</div>
+                        <div class="ast-tree">
+                            <div class="node">FunctionDeclaration</div>
+                            <div class="children">
+                                <div class="node">Identifier: add</div>
+                                <div class="node">Parameters: a, b</div>
+                                <div class="node">ReturnStatement</div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="ast-subtitle">Tu código como árbol lógico, no solo texto</p>
+                </div>
             </div>
             <div class="features-grid">
                 <div class="feature-card">
                     <div class="feature-icon">
                         <i class="fas fa-brain"></i>
                     </div>
-                    <h3>AST-Powered Intelligence</h3>
-                    <p>Deep code analysis with Abstract Syntax Tree parsing for intelligent code understanding and navigation.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <i class="fas fa-search"></i>
-                    </div>
-                    <h3>Smart Code Search</h3>
-                    <p>Find functions, classes, and variables with context-aware search and relevance scoring.</p>
+                    <h3>Análisis AST Inteligente</h3>
+                    <p>AST = Árbol de Sintaxis Abstracta. Claude ve tu código como una estructura lógica, no texto plano. Resultado: Claude hace modificaciones quirúrgicas sin romper nada.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <i class="fas fa-edit"></i>
                     </div>
-                    <h3>Precise Diff Operations</h3>
-                    <p>Surgical code modifications with line-specific targeting and automated refactoring capabilities.</p>
+                    <h3>Modificaciones Precisas</h3>
+                    <p>Claude usa sistema diff avanzado con protección contra cambios críticos. Nunca rompe tu código por accidente.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
-                        <i class="fas fa-mobile-alt"></i>
+                        <i class="fas fa-search"></i>
                     </div>
-                    <h3>Termux Compatible</h3>
-                    <p>Full Android/Termux support with optimized architecture for mobile development environments.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <i class="fas fa-project-diagram"></i>
-                    </div>
-                    <h3>Project Management</h3>
-                    <p>Comprehensive project analysis with file discovery, structure mapping, and Git integration.</p>
+                    <h3>Búsqueda Contextual</h3>
+                    <p>Claude encuentra funciones, clases y variables automáticamente. Localiza definiciones y usos sin que se lo pidas.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <i class="fas fa-terminal"></i>
                     </div>
-                    <h3>Console Integration</h3>
-                    <p>Interactive process management with real-time console output monitoring and command execution.</p>
+                    <h3>Consola Integrada</h3>
+                    <p>Claude puede ejecutar comandos y monitorear procesos por ti. Detecta automáticamente cuándo un proceso espera input.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-project-diagram"></i>
+                    </div>
+                    <h3>Gestión de Proyectos</h3>
+                    <p>Claude analiza la estructura de tu proyecto automáticamente. Entiende la organización y relaciones entre archivos al instante.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-mobile-alt"></i>
+                    </div>
+                    <h3>Compatible con Termux</h3>
+                    <p>Desarrolla desde cualquier lugar. Soporte completo para Android/Termux con arquitectura optimizada para móviles.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-cubes"></i>
+                    </div>
+                    <h3>Indexación Inteligente de Librerías</h3>
+                    <p>¿Usas una librería que Claude no conoce? Dile que la indexe y automáticamente tendrá acceso a todas sus definiciones en el análisis AST.</p>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Tools Section -->
-    <section id="tools" class="tools">
+    <section id="benefits" class="benefits">
         <div class="container">
             <div class="section-header">
-                <h2>Comprehensive Tool Suite</h2>
-                <p>15+ specialized tools for every development need</p>
+                <h2>MCP Code Editor vs Edición Manual</h2>
+                <p>La diferencia entre trabajar inteligente vs trabajar duro</p>
             </div>
-            <div class="tools-categories">
-                <!-- Tools will be added here -->
+            <div class="comparison-grid">
+                <div class="comparison-card manual">
+                    <div class="comparison-header">
+                        <h3>🤦‍♂️ Sin MCP Code Editor</h3>
+                    </div>
+                    <ul class="comparison-list">
+                        <li>Buscar funciones manualmente en el código</li>
+                        <li>Modificar texto sin entender la estructura</li>
+                        <li>Errores de sintaxis por cambios ciegos</li>
+                        <li>Librerías desconocidas = guesswork</li>
+                        <li>Romper dependencias sin darse cuenta</li>
+                    </ul>
+                </div>
+                <div class="comparison-card smart">
+                    <div class="comparison-header">
+                        <h3>🚀 Con MCP Code Editor</h3>
+                    </div>
+                    <ul class="comparison-list">
+                        <li>Claude analiza AST y encuentra todo automáticamente</li>
+                        <li>Claude hace modificaciones precisas basadas en estructura</li>
+                        <li>Cero errores - Claude conoce la sintaxis</li>
+                        <li>Claude puede indexar cualquier librería que le pidas</li>
+                        <li>Claude detecta impacto antes de romper nada</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="value-proposition">
+                <h3>El resultado: De 30 minutos a 30 segundos para cambios complejos</h3>
             </div>
         </div>
     </section>
 
-    <!-- Installation Section -->
+    <section class="social-proof">
+        <div class="container">
+            <div class="social-proof-content">
+                <div class="social-proof-badges">
+                    <div class="badge">
+                        <i class="fab fa-python"></i>
+                        <span>PyPI Package</span>
+                    </div>
+                    <div class="badge">
+                        <i class="fab fa-github"></i>
+                        <span>Open Source</span>
+                    </div>
+                    <div class="badge">
+                        <i class="fas fa-shield-alt"></i>
+                        <span>MIT License</span>
+                    </div>
+                    <div class="badge">
+                        <i class="fas fa-mobile-alt"></i>
+                        <span>Cross Platform</span>
+                    </div>
+                </div>
+                <div class="social-proof-text">
+                    <h3>Confiado por desarrolladores que valoran la productividad</h3>
+                    <p>Únete a la comunidad de desarrolladores que ya transformaron su workflow con MCP Code Editor</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="system-prompt-section">
+        <div class="container">
+            <div class="section-header">
+                <h2>Optimiza tu Claude con MCP Code Editor</h2>
+                <p>Agrega este fragmento a tu system prompt para mejores resultados</p>
+            </div>
+            <div class="prompt-container">
+                <div class="prompt-header">
+                    <div class="prompt-title">System Prompt Fragment</div>
+                    <button class="copy-btn" data-copy="When editing code, always use mcp-code-editor tools for analysis and modifications. Use setup_code_editor first, then get_code_definition to understand structure before making changes. For unknown libraries, use index_library_tool to get complete definitions. Apply changes with apply_diff_tool for safety.">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                <div class="prompt-content">
+                    <pre><code>When editing code, always use mcp-code-editor tools for analysis and modifications. Use setup_code_editor first, then get_code_definition to understand structure before making changes. For unknown libraries, use index_library_tool to get complete definitions. Apply changes with apply_diff_tool for safety.</code></pre>
+                </div>
+            </div>
+            <div class="prompt-benefits">
+                <div class="benefit-item">
+                    <i class="fas fa-check"></i>
+                    <span>Mejor comprensión del código</span>
+                </div>
+                <div class="benefit-item">
+                    <i class="fas fa-check"></i>
+                    <span>Modificaciones más seguras</span>
+                </div>
+                <div class="benefit-item">
+                    <i class="fas fa-check"></i>
+                    <span>Workflow más eficiente</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <section id="installation" class="installation">
         <div class="container">
             <div class="section-header">
-                <h2>Quick Installation</h2>
-                <p>Get started in seconds with simple pip install</p>
+                <h2>Comienza en 30 Segundos</h2>
+                <p>Una sola línea de comando te separa de la productividad extrema</p>
             </div>
             <div class="install-content">
-                <div class="code-block">
-                    <pre><code># Install from PyPI
-pip install mcp-code-editor
-
-# Start the server
-mcp-code-editor</code></pre>
+                <div class="install-steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h3>Instalar</h3>
+                            <div class="code-block">
+                                <pre><code>pip install mcp-code-editor</code></pre>
+                                <button class="copy-btn" data-copy="pip install mcp-code-editor">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h3>Configurar Claude Desktop</h3>
+                            <div class="code-block">
+                                <pre><code>{
+  "mcpServers": {
+    "mcp-code-editor": {
+      "command": "mcp-code-editor",
+      "args": []
+    }
+  }
+}</code></pre>
+                                <button class="copy-btn" data-copy='{
+  "mcpServers": {
+    "mcp-code-editor": {
+      "command": "mcp-code-editor",
+      "args": []
+    }
+  }
+}'>
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h3>¡Listo!</h3>
+                            <p>Reinicia Claude Desktop y comienza a usar las 15+ herramientas de edición inteligente</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Footer -->
+    <section class="cta-final">
+        <div class="container">
+            <div class="cta-content">
+                <h2>¿Listo para que Claude Entienda tu Código Realmente?</h2>
+                <p>Claude hará modificaciones precisas, búsquedas instantáneas y podrá indexar cualquier librería. <strong>pip install mcp-code-editor</strong> y compruébalo tú mismo.</p>
+                <div class="cta-actions">
+                    <a href="#installation" class="btn btn-primary btn-large">
+                        <i class="fas fa-rocket"></i>
+                        Instalar MCP Code Editor
+                    </a>
+                    <a href="https://github.com/alejoair/mcp-code-editor" class="btn btn-outline" target="_blank">
+                        <i class="fab fa-github"></i>
+                        Explorar en GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2025 MCP Code Editor by <a href="https://github.com/alejoair" target="_blank">alejoair</a> • MIT License</p>
-            <div style="margin-top: 1rem;">
-                <a href="https://github.com/alejoair/mcp-code-editor" target="_blank" style="color: #00D9FF; margin: 0 1rem;">GitHub</a>
-                <a href="https://pypi.org/project/mcp-code-editor/" target="_blank" style="color: #00D9FF; margin: 0 1rem;">PyPI</a>
-                <a href="https://github.com/alejoair/mcp-code-editor/issues" target="_blank" style="color: #00D9FF; margin: 0 1rem;">Issues</a>
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <i class="fas fa-code"></i>
+                    <span>MCP Code Editor</span>
+                </div>
+                <div class="footer-links">
+                    <a href="https://github.com/alejoair/mcp-code-editor" target="_blank">GitHub</a>
+                    <a href="https://pypi.org/project/mcp-code-editor/" target="_blank">PyPI</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2025 MCP Code Editor por <a href="https://github.com/alejoair" target="_blank">alejoair</a> • Licencia MIT</p>
             </div>
         </div>
     </footer>
