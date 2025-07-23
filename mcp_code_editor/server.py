@@ -452,6 +452,10 @@ async def read_file_with_lines_tool(path: str, start_line: int = None, end_line:
     """
     result = read_file_with_lines(path, start_line, end_line)
     
+    # Remove plain_content from the result
+    if 'plain_content' in result:
+        del result['plain_content']
+    
     # Enhance Python files with AST information if available
     if result.get("success") and path.endswith('.py') and ctx:
         state = getattr(mcp, 'project_state', None)
