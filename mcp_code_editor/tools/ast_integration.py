@@ -8,6 +8,7 @@ import ast
 import logging
 from typing import Dict, List, Any, Optional, Set, Tuple
 from pathlib import Path
+from .diff_simulator import simulate_diff_changes
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class ASTDiffAnalyzer:
             current_tree = ast.parse(current_content)
             
             # Simulate the changes to get new content
-            modified_content = self._simulate_diff_changes(current_content, diff_blocks)
+            modified_content = simulate_diff_changes(current_content, diff_blocks)
             
             try:
                 new_tree = ast.parse(modified_content)
@@ -84,28 +85,6 @@ class ASTDiffAnalyzer:
                 "error_type": "analysis"
             }
     
-    def _simulate_diff_changes(self, content: str, diff_blocks: List[Dict[str, Any]]) -> str:
-        """Simulate applying diff blocks to get the modified content."""
-        lines = content.splitlines()
-        
-        # Sort blocks by line number in reverse order to avoid index shifting
-        sorted_blocks = sorted(diff_blocks, key=lambda b: b.get('start_line', 0), reverse=True)
-        
-        for block in sorted_blocks:
-            start_line = block.get('start_line', 1) - 1  # Convert to 0-indexed
-            search_content = block.get('search_content', '')
-            replace_content = block.get('replace_content', '')
-            
-            search_lines = search_content.splitlines()
-            replace_lines = replace_content.splitlines()
-            
-            # Find the exact match
-            if start_line < len(lines):
-                # Simple replacement for simulation
-                end_line = start_line + len(search_lines)
-                lines[start_line:end_line] = replace_lines
-        
-        return '\n'.join(lines)
     
     def _detect_ast_changes(self, old_tree: ast.AST, new_tree: ast.AST) -> Dict[str, List[str]]:
         """Detect what changed between two AST trees."""

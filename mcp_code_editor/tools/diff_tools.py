@@ -8,12 +8,12 @@ from ..core.models import DiffBlock, DiffBuilder, FileModifier
 logger = logging.getLogger(__name__)
 
 
-def apply_diff(path: str, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+def apply_diff(file_path: str, diff_blocks: List[Dict[str, Any]], force: bool = False, validate_syntax: bool = True) -> Dict[str, Any]:
     """
     Apply precise file modifications using structured diff blocks.
     
     This tool makes surgical changes to files using fuzzy matching with line hints,
-    making it more precise than simple search-and-replace operations.
+    making it more precise and reliable than simple search-and-replace operations.
     
     Args:
         path: The file path to modify
@@ -65,6 +65,14 @@ def apply_diff(path: str, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
         diff_string = DiffBuilder.build_diff_string(diff_blocks)
         logger.debug(f"Applied diff:\n{diff_string}")
         
+        # Calcular líneas realmente modificadas (no solo la diferencia neta)
+        lines_modified = 0
+        for block in diff_blocks:
+            # Los diff_blocks son objetos DiffBlock (Pydantic models)
+            start_line = block.start_line
+            end_line = block.end_line if block.end_line else start_line
+            lines_modified += max(1, end_line - start_line + 1)
+        
         return {
             "success": True,
             "message": f"Successfully applied {len(diff_blocks)} diff blocks to {path}",
@@ -72,7 +80,8 @@ def apply_diff(path: str, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
             "blocks_applied": len(diff_blocks),
             "original_lines": original_lines,
             "new_lines": new_lines,
-            "lines_changed": new_lines - original_lines
+            "lines_changed": lines_modified,
+            "net_line_change": new_lines - original_lines
         }
         
     except FileNotFoundError as e:
