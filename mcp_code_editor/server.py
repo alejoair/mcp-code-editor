@@ -279,72 +279,72 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
     skip_ast_analysis = _is_trivial_change(blocks)
     
     if state and state.ast_enabled and hasattr(state, 'ast_index') and not skip_ast_analysis:
-            try:
-                from mcp_code_editor.tools.ast_integration import enhance_apply_diff_with_ast
-                pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
-                
-                # Collect warnings for syntax errors only (breaking changes handled separately)
-                ast_warnings = pre_analysis.get("warnings", [])
-                
-                # NUEVO: Análisis de dependencias automático
-                from mcp_code_editor.tools.dependency_analyzer import enhance_apply_diff_with_dependencies
-                dependency_result = enhance_apply_diff_with_dependencies(path, blocks, state.ast_index)
-                
-                dependency_analysis = dependency_result.get("dependency_analysis", {})
-                impact_summary = dependency_result.get("impact_summary", {})
-                
-                # ELIMINADO: ast_warnings duplicaba breaking_changes
-                # ELIMINADO: ast_recommendations duplicaba dependency_analysis.recommendations
-                
-                # Check if we should proceed - solo bloquear errores de sintaxis
-                should_proceed = pre_analysis.get("should_proceed", True)
-                ast_analysis = pre_analysis.get("ast_analysis", {})
-                error_type = ast_analysis.get("error_type")
-                
-                # Solo bloquear errores de sintaxis, no errores de análisis
-                if not should_proceed and error_type == "syntax":
-                    return {
-                        "success": False,
-                        "error": "SYNTAX_ERROR",
-                        "message": f"Syntax error in modified code: {ast_analysis.get('error', 'Unknown syntax error')}",
-                        "ast_warnings": ast_warnings,
-                        # ELIMINADO: ast_recommendations redundante
-                        "suggested_action": "Fix the syntax error before applying the diff."
-                    }
-                elif not should_proceed:
-                    # Para otros tipos de problemas, agregar warning pero continuar
-                    ast_warnings.append({
-                        "type": "analysis_concern", 
-                        "severity": "medium",
-                        "message": f"Analysis detected issues: {ast_analysis.get('error', 'Unknown issue')}"
-                    })
-                    
-            except Exception as e:
-                # Note: In exception handler, we can't use await ctx.error() since we may not have async context
-                # Keep traditional logging for critical error handling
+        try:
+            from mcp_code_editor.tools.ast_integration import enhance_apply_diff_with_ast
+            pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
+            
+            # Collect warnings for syntax errors only (breaking changes handled separately)
+            ast_warnings = pre_analysis.get("warnings", [])
+            
+            # NUEVO: Análisis de dependencias automático
+            from mcp_code_editor.tools.dependency_analyzer import enhance_apply_diff_with_dependencies
+            dependency_result = enhance_apply_diff_with_dependencies(path, blocks, state.ast_index)
+            
+            dependency_analysis = dependency_result.get("dependency_analysis", {})
+            impact_summary = dependency_result.get("impact_summary", {})
+            
+            # ELIMINADO: ast_warnings duplicaba breaking_changes
+            # ELIMINADO: ast_recommendations duplicaba dependency_analysis.recommendations
+            
+            # Check if we should proceed - solo bloquear errores de sintaxis
+            should_proceed = pre_analysis.get("should_proceed", True)
+            ast_analysis = pre_analysis.get("ast_analysis", {})
+            error_type = ast_analysis.get("error_type")
+            
+            # Solo bloquear errores de sintaxis, no errores de análisis
+            if not should_proceed and error_type == "syntax":
+                return {
+                    "success": False,
+                    "error": "SYNTAX_ERROR",
+                    "message": f"Syntax error in modified code: {ast_analysis.get('error', 'Unknown syntax error')}",
+                    "ast_warnings": ast_warnings,
+                    # ELIMINADO: ast_recommendations redundante
+                    "suggested_action": "Fix the syntax error before applying the diff."
+                }
+            elif not should_proceed:
+                # Para otros tipos de problemas, agregar warning pero continuar
                 ast_warnings.append({
-                    "type": "ast_analysis_error",
-                    "severity": "medium", 
-                    "message": f"AST analysis failed: {str(e)}"
+                    "type": "analysis_concern", 
+                    "severity": "medium",
+                    "message": f"Analysis detected issues: {ast_analysis.get('error', 'Unknown issue')}"
                 })
-                # Initialize empty dependency analysis on error, but still include it
-                dependency_analysis = {
-                    "error": str(e),
-                    "modified_functions": [],
-                    "modified_classes": [],
-                    "affected_callers": [],
-                    "breaking_changes": [],
-                    "files_to_review": [],
-                    "impact_level": "unknown",
-                    "recommendations": ["⚠️ Dependency analysis failed - manual review recommended"]
-                }
-                impact_summary = {
-                    "error": str(e),
-                    "modified_items": 0,
-                    "affected_files": 0,
-                    "breaking_changes": 0,
-                    "impact_level": "unknown"
-                }
+                
+        except Exception as e:
+            # Note: In exception handler, we can't use await ctx.error() since we may not have async context
+            # Keep traditional logging for critical error handling
+            ast_warnings.append({
+                "type": "ast_analysis_error",
+                "severity": "medium", 
+                "message": f"AST analysis failed: {str(e)}"
+            })
+            # Initialize empty dependency analysis on error, but still include it
+            dependency_analysis = {
+                "error": str(e),
+                "modified_functions": [],
+                "modified_classes": [],
+                "affected_callers": [],
+                "breaking_changes": [],
+                "files_to_review": [],
+                "impact_level": "unknown",
+                "recommendations": ["⚠️ Dependency analysis failed - manual review recommended"]
+            }
+            impact_summary = {
+                "error": str(e),
+                "modified_items": 0,
+                "affected_files": 0,
+                "breaking_changes": 0,
+                "impact_level": "unknown"
+            }
     
     # Check for critical breaking changes (unless forced)
     if not force and dependency_analysis.get("breaking_changes"):
