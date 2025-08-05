@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-code-editor"
-version = "0.1.23"
+version = "0.1.24"
 authors = [
     {name = "MCP Code Editor Team", email = "mcpcodeeditor@example.com"},
 ]
