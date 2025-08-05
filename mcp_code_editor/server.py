@@ -92,9 +92,14 @@ def _clean_response(data):
     elif isinstance(data, list):
         cleaned = []
         for item in data:
-            cleaned_item = _clean_response(item)
-            if cleaned_item or isinstance(item, (str, int, float, bool)):
-                cleaned.append(cleaned_item if isinstance(item, (dict, list)) else item)
+            if isinstance(item, (dict, list)):
+                cleaned_item = _clean_response(item)
+                # Only include non-empty containers
+                if cleaned_item:
+                    cleaned.append(cleaned_item)
+            elif item is not None and item != "":
+                # Include non-empty primitive values
+                cleaned.append(item)
         return cleaned
     else:
         return data
