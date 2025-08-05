@@ -221,7 +221,6 @@ def setup_code_editor(path: str) -> Dict[str, Any]:
             "project_type": project_type,
             "gitignore_found": gitignore_path.exists(),
             "gitignore_rules_count": len(state.gitignore_rules),
-            "exclude_dirs": state.exclude_dirs,
             "summary": {
                 "total_files": summary["files"],
                 "total_directories": summary["directories"],
@@ -371,11 +370,6 @@ def project_files(project_state: ProjectState,
     result = {
         "success": True,
         "project_root": str(project_state.project_root),
-        "last_setup": project_state.last_setup.isoformat() if project_state.last_setup else None,
-        "filters_applied": {
-            "extensions": filter_extensions,
-            "max_depth": max_depth
-        },
         "summary": {
             "total_files": summary["files"],
             "total_directories": summary["directories"],
@@ -383,8 +377,21 @@ def project_files(project_state: ProjectState,
         }
     }
     
+    # Solo incluir campos cuando son relevantes
+    if filter_extensions or max_depth:
+        result["filters_applied"] = {}
+        if filter_extensions:
+            result["filters_applied"]["extensions"] = filter_extensions
+        if max_depth:
+            result["filters_applied"]["max_depth"] = max_depth
+    
+    # Solo incluir file_tree si es pequeño o se requiere explícitamente
     if format_as_tree:
-        result["file_tree"] = filtered_tree
+        # Si el tree es muy grande (>20 archivos), dar opción de summary
+        if summary["files"] > 20:
+            result["file_tree_summary"] = f"Tree contains {summary['files']} files across {summary['directories']} directories. Use format_as_tree=False for file list or filter for smaller tree."
+        else:
+            result["file_tree"] = filtered_tree
     else:
         result["files"] = _flatten_tree(filtered_tree)
     
