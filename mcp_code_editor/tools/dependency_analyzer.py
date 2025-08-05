@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import json
+from .diff_simulator import simulate_diff_changes
 
 logger = logging.getLogger(__name__)
 
@@ -100,80 +101,36 @@ class DependencyAnalyzer:
             analysis["breaking_changes"] = breaking_changes
             
             # NUEVAS FUNCIONALIDADES:
-            
-            # Analizar impacto en herencia para clases modificadas
-            inheritance_impact = []
-            for class_name in modified_items["classes"]:
-                inheritance_issues = self._analyze_inheritance_impact(class_name, {})
-                inheritance_impact.extend(inheritance_issues)
-            analysis["inheritance_impact"] = inheritance_impact
-            
-            # Analizar impacto en composición
-            composition_impact = []
-            for class_name in modified_items["classes"]:
-                composition_issues = self._analyze_composition_impact(class_name)
-                composition_impact.extend(composition_issues)
-            analysis["composition_impact"] = composition_impact
-            
-            # Trazar cadenas de dependencia
-            all_modified = modified_items["functions"] + modified_items["classes"]
-            dependency_chains = self._trace_dependency_chains(all_modified, max_depth=3)
-            chains_impact = self._analyze_dependency_chains_impact(dependency_chains)
-            analysis["dependency_chains"] = {
-                "chains": dependency_chains,
-                "impact_analysis": chains_impact
-            }
-            
-            # Generar sugerencias de migración
-            migration_suggestions = self._generate_migration_suggestions(breaking_changes)
-            analysis["migration_suggestions"] = migration_suggestions
-            
-            # Generar parches automáticos
-            auto_fix_patches = self._generate_auto_fix_patches(migration_suggestions)
-            analysis["auto_fix_patches"] = auto_fix_patches
-            
             # Calcular nivel de impacto (actualizado con nuevos datos)
             impact_level = self._calculate_impact_level(modified_items, affected_callers, breaking_changes)
             analysis["impact_level"] = impact_level
             
-            # Generar recomendaciones (actualizado con nuevos datos)
-            recommendations = self._generate_recommendations(analysis)
-            analysis["recommendations"] = recommendations
+            # ELIMINADO: Recomendaciones genéricas verbose eliminadas
             
-            # ANÁLISIS ESTÁTICO CON PYLINT/PYFLAKES
-            # Debug: agregar info básica antes de llamar análisis estático
-            analysis["static_warnings"] = [{
-                "tool": "debug",
-                "line": 0,
-                "severity": "info",
-                "message": "Starting static analysis - method about to be called",
-                "type": "debug_info",
-                "code": "pre-analysis"
-            }]
-            
-            try:
-                static_warnings = self._run_static_analysis(file_path, diff_blocks, current_content)
-                # Combinar debug info con resultados reales
-                analysis["static_warnings"].extend(static_warnings)
-            except Exception as e:
-                analysis["static_warnings"].append({
-                    "tool": "debug",
-                    "line": 0,
-                    "severity": "error",
-                    "message": f"Static analysis failed with error: {str(e)}",
-                    "type": "debug_info",
-                    "code": "analysis-error"
-                })
-            
-            # Actualizar nivel de impacto si hay errores críticos
-            if any(w.get("severity") == "error" for w in static_warnings):
-                analysis["impact_level"] = "critical"
             
         except Exception as e:
             logger.error(f"Error analyzing dependencies: {e}")
             analysis["error"] = str(e)
         
-        return analysis
+        # Filtrar solo campos que realmente no aportan valor
+        # Mantener todos los campos esenciales, incluso si están vacíos
+        essential_fields = {
+            "modified_functions", "modified_classes", 
+            "files_to_review", "breaking_changes", "signature_changes",
+            "impact_level", "error"
+        }
+        
+        filtered_analysis = {}
+        for key, value in analysis.items():
+            # Solo omitir campos no esenciales que estén vacíos
+            if isinstance(value, list) and len(value) == 0 and key not in essential_fields:
+                continue
+            # Omitir diccionarios vacíos no esenciales
+            if isinstance(value, dict) and len(value) == 0 and key not in essential_fields:
+                continue
+            filtered_analysis[key] = value
+        
+        return filtered_analysis
     
     def _detect_modified_items(self, current_content: str, diff_blocks: List[Dict]) -> Dict[str, List[str]]:
         """Detecta qué funciones y clases se están modificando."""
@@ -239,7 +196,7 @@ class DependencyAnalyzer:
         
         try:
             # Simular los cambios para obtener el contenido modificado
-            modified_content = self._simulate_diff_changes(current_content, diff_blocks)
+            modified_content = simulate_diff_changes(current_content, diff_blocks)
             
             # Parsear ambas versiones
             current_tree = ast.parse(current_content)
@@ -263,7 +220,7 @@ class DependencyAnalyzer:
                             "old_signature": current_sig,
                             "new_signature": modified_sig,
                             "change_type": change_type,
-                            "is_breaking": change_type in ["removed_args", "changed_args", "removed_function"]
+                            "is_breaking": change_type in ["removed_args", "changed_args", "renamed_args", "removed_function"]
                         })
                 elif func_name not in modified_signatures:
                     # Función removida
@@ -281,26 +238,6 @@ class DependencyAnalyzer:
         
         return signature_changes
     
-    def _simulate_diff_changes(self, content: str, diff_blocks: List[Dict]) -> str:
-        """Simula la aplicación de diff blocks para obtener el contenido modificado."""
-        lines = content.splitlines()
-        
-        # Ordenar bloques por línea en orden reverso para evitar problemas de índice
-        sorted_blocks = sorted(diff_blocks, key=lambda b: b.get('start_line', 0), reverse=True)
-        
-        for block in sorted_blocks:
-            start_line = block.get('start_line', 1) - 1  # Convert to 0-indexed
-            search_content = block.get('search_content', '')
-            replace_content = block.get('replace_content', '')
-            
-            search_lines = search_content.splitlines()
-            replace_lines = replace_content.splitlines()
-            
-            if start_line < len(lines):
-                end_line = start_line + len(search_lines)
-                lines[start_line:end_line] = replace_lines
-        
-        return '\n'.join(lines)
     
     def _extract_function_signatures(self, tree: ast.AST) -> Dict[str, str]:
         """Extrae las firmas de todas las funciones."""
@@ -343,14 +280,29 @@ class DependencyAnalyzer:
         old_args = self._extract_args_from_signature(old_sig)
         new_args = self._extract_args_from_signature(new_sig)
         
+        # Extraer nombres de parámetros sin defaults para comparar
+        old_param_names = [arg.split('=')[0].strip() for arg in old_args]
+        new_param_names = [arg.split('=')[0].strip() for arg in new_args]
+        
+        # Verificar si se eliminaron argumentos
         if len(new_args) < len(old_args):
             return "removed_args"
-        elif len(new_args) > len(old_args):
+        
+        # Verificar si se cambiaron nombres de parámetros existentes
+        min_len = min(len(old_param_names), len(new_param_names))
+        for i in range(min_len):
+            if old_param_names[i] != new_param_names[i]:
+                return "renamed_args"  # NUEVO: detecta cambios de nombres
+        
+        # Verificar si se agregaron argumentos
+        if len(new_args) > len(old_args):
             return "added_args"
+        
+        # Verificar otros cambios (tipos, defaults, etc.)
         elif old_args != new_args:
             return "changed_args"
         else:
-            return "renamed_function"
+            return "no_change"
     
     def _extract_args_from_signature(self, signature: str) -> List[str]:
         """Extrae los argumentos de una firma de función."""
@@ -782,7 +734,7 @@ class DependencyAnalyzer:
         """Ejecuta análisis estático en el contenido modificado"""
         try:
             # Simular aplicación del diff
-            new_content = self._simulate_diff_application(current_content, diff_blocks)
+            new_content = simulate_diff_changes(current_content, diff_blocks)
             
             warnings = []
             
@@ -811,21 +763,6 @@ class DependencyAnalyzer:
             logger.warning(f"Error in static analysis: {e}")
             return []
     
-    def _simulate_diff_application(self, current_content: str, diff_blocks: List[Dict]) -> str:
-        """Simula la aplicación de diff para obtener contenido nuevo"""
-        lines = current_content.splitlines()
-        
-        # Aplicar cada bloque de diff
-        for block in diff_blocks:
-            start_line = block.get("start_line", 1) - 1  # Convert to 0-based
-            end_line = block.get("end_line", start_line + 1)
-            replace_content = block.get("replace_content", "")
-            
-            # Reemplazar líneas
-            new_lines = replace_content.splitlines()
-            lines[start_line:end_line] = new_lines
-        
-        return '\n'.join(lines)
     
     def _run_pyflakes_analysis(self, content: str) -> List[Dict]:
         """Ejecuta pyflakes en el contenido"""
@@ -962,12 +899,12 @@ def enhance_apply_diff_with_dependencies(file_path: str, diff_blocks: List[Dict]
         
         return {
             "dependency_analysis": dependency_analysis,
-            "has_dependencies": len(dependency_analysis["affected_callers"]) > 0,
+            "has_dependencies": len(dependency_analysis.get("affected_callers", [])) > 0,
             "impact_summary": {
-                "modified_items": len(dependency_analysis["modified_functions"]) + len(dependency_analysis["modified_classes"]),
-                "affected_files": len(dependency_analysis["files_to_review"]),
-                "breaking_changes": len(dependency_analysis["breaking_changes"]),
-                "impact_level": dependency_analysis["impact_level"]
+                "modified_items": len(dependency_analysis.get("modified_functions", [])) + len(dependency_analysis.get("modified_classes", [])),
+                "affected_files": len(dependency_analysis.get("files_to_review", [])),
+                "breaking_changes": len(dependency_analysis.get("breaking_changes", [])),
+                "impact_level": dependency_analysis.get("impact_level", "low")
             }
         }
     

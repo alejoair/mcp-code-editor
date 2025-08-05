@@ -8,8 +8,8 @@ This script tests:
 3. Library context integration
 """
 
-def test_function_with_breaking_change(new_param_only):
-    """This function will be modified to test breaking change detection."""
+def test_function_with_breaking_change(new_arg1, new_arg2):
+    """This function demonstrates dependency analysis functionality."""
     return old_param + new_param
 
 def helper_function():

@@ -184,9 +184,34 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
         
     Note: Content matching uses fuzzy whitespace matching but requires exact text.
     """
+    
+    def _is_trivial_change(blocks: List[Dict]) -> bool:
+        """Detecta si los cambios son triviales y no requieren análisis AST completo."""
+        for block in blocks:
+            search_content = block.get("search_content", "")
+            replace_content = block.get("replace_content", "")
+            
+            # Si el cambio es solo en docstrings/comentarios, es trivial
+            search_stripped = search_content.strip()
+            replace_stripped = replace_content.strip()
+            
+            # Cambio solo en strings/docstrings - ES trivial
+            if (search_stripped.startswith('"""') and search_stripped.endswith('"""') and
+                replace_stripped.startswith('"""') and replace_stripped.endswith('"""')):
+                continue
+                
+            # Cambio solo en comentarios - ES trivial
+            if (search_stripped.startswith('#') and replace_stripped.startswith('#')):
+                continue
+                
+            # Si llegamos aquí, hay al menos un cambio NO trivial
+            return False
+            
+        # Solo si TODOS los cambios fueron triviales
+        return True
     # AST-powered pre-analysis if enabled
     ast_warnings = []
-    ast_recommendations = []
+    # ELIMINADO: ast_recommendations redundante
     # Initialize dependency analysis with default structure (always available)
     dependency_analysis = {
         "modified_functions": [],
@@ -212,14 +237,25 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
         # Fallback: try to get state directly from mcp server
         state = getattr(mcp, 'project_state', None)
     
-    if state and state.ast_enabled and hasattr(state, 'ast_index'):
+    # VALIDACIÓN OBLIGATORIA: Requiere setup del proyecto
+    if not state or not hasattr(state, 'setup_complete') or not state.setup_complete:
+        return {
+            "success": False,
+            "error": "ProjectNotSetup",
+            "message": "Project not setup. Please run setup_code_editor_tool first to enable advanced analysis and dependency detection.",
+            "suggested_action": "Run setup_code_editor_tool(path='your_project_path') before using apply_diff_tool"
+        }
+    
+    # Optimización: omitir análisis AST para cambios triviales
+    skip_ast_analysis = _is_trivial_change(blocks)
+    
+    if state and state.ast_enabled and hasattr(state, 'ast_index') and not skip_ast_analysis:
             try:
                 from mcp_code_editor.tools.ast_integration import enhance_apply_diff_with_ast
                 pre_analysis = enhance_apply_diff_with_ast(path, blocks, state.ast_index)
                 
-                # Collect warnings and recommendations for the response
+                # Collect warnings for syntax errors only (breaking changes handled separately)
                 ast_warnings = pre_analysis.get("warnings", [])
-                ast_recommendations = pre_analysis.get("recommendations", [])
                 
                 # NUEVO: Análisis de dependencias automático
                 from mcp_code_editor.tools.dependency_analyzer import enhance_apply_diff_with_dependencies
@@ -228,20 +264,8 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
                 dependency_analysis = dependency_result.get("dependency_analysis", {})
                 impact_summary = dependency_result.get("impact_summary", {})
                 
-                # Agregar información de dependencias a las advertencias
-                if dependency_analysis.get("breaking_changes"):
-                    for breaking_change in dependency_analysis["breaking_changes"]:
-                        ast_warnings.append({
-                            "type": "breaking_change",
-                            "severity": breaking_change.get("severity", "high"),
-                            "message": f"Breaking change in {breaking_change['function']}: {breaking_change['change_type']}",
-                            "affected_files": breaking_change.get("files_affected", []),
-                            "affected_callers": breaking_change.get("affected_callers", 0)
-                        })
-                
-                # Agregar recomendaciones de dependencias
-                if dependency_analysis.get("recommendations"):
-                    ast_recommendations.extend(dependency_analysis["recommendations"])
+                # ELIMINADO: ast_warnings duplicaba breaking_changes
+                # ELIMINADO: ast_recommendations duplicaba dependency_analysis.recommendations
                 
                 # Check if we should proceed - solo bloquear errores de sintaxis
                 should_proceed = pre_analysis.get("should_proceed", True)
@@ -255,7 +279,7 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
                         "error": "SYNTAX_ERROR",
                         "message": f"Syntax error in modified code: {ast_analysis.get('error', 'Unknown syntax error')}",
                         "ast_warnings": ast_warnings,
-                        "ast_recommendations": ast_recommendations,
+                        # ELIMINADO: ast_recommendations redundante
                         "suggested_action": "Fix the syntax error before applying the diff."
                     }
                 elif not should_proceed:
@@ -327,8 +351,8 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
         
         # Add AST insights to successful result (ALWAYS when AST is enabled)
         if ctx and getattr(mcp, 'project_state', None) and getattr(mcp.project_state, 'ast_enabled', False):
-            result["ast_warnings"] = ast_warnings
-            result["ast_recommendations"] = ast_recommendations
+            # ELIMINADO: ast_warnings redundante con breaking_changes
+            # ELIMINADO: ast_recommendations redundante con dependency_analysis
             result["ast_enabled"] = True  # Confirm AST is working
             
             # NUEVO: Agregar análisis de dependencias (SIEMPRE incluir, incluso si está vacío)
@@ -359,11 +383,7 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
             files_to_review = dependency_analysis.get("files_to_review", [])
             breaking_changes = dependency_analysis.get("breaking_changes", [])
             
-            # Agregar información de librerías indexadas a las recomendaciones
-            if dependency_analysis.get("library_context"):
-                ast_recommendations.append("📚 LIBRARY CONTEXT: Modified functions use indexed libraries")
-                for lib_info in dependency_analysis["library_context"]:
-                    ast_recommendations.append(f"  • {lib_info['function']} uses {lib_info['library']}")
+            # ELIMINADO: library context recommendations - información innecesaria
             
             # Mostrar warnings de análisis estático si existen
             static_warnings = dependency_analysis.get("static_warnings", [])
@@ -376,9 +396,7 @@ async def apply_diff_tool(path: str, blocks: List[Dict[str, Any]], force: bool =
                 
                 # Agregar a recomendaciones
                 error_count = sum(1 for w in static_warnings if w.get("severity") == "error")
-                if error_count > 0:
-                    ast_recommendations.insert(0, f"🚨 STATIC ANALYSIS: {error_count} errors found - fix before applying")
-                    ast_recommendations.insert(1, f"🔍 Check: {', '.join(w['message'][:50] + '...' if len(w['message']) > 50 else w['message'] for w in static_warnings[:3])}")
+                # ELIMINADO: static analysis recommendations - información innecesaria
             
             # Actualizar suggested_next_action con contexto de librerías
             library_context_summary = ""
