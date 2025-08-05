@@ -721,6 +721,8 @@ class InteractiveSubprocess:
             process_pid = self.process.pid
             exit_code = None
             action = "terminated"
+            terminated_pids = []
+            failed_pids = []
             
             # First, try graceful termination of subprocess
             if not force:
@@ -728,6 +730,7 @@ class InteractiveSubprocess:
                     self.process.terminate()  # Send SIGTERM
                     exit_code = self.process.wait(timeout=timeout//3)
                     action = "terminated gracefully"
+                    terminated_pids = [process_pid]  # Track successful termination
                 except subprocess.TimeoutExpired:
                     # If graceful termination failed, try system-level termination
                     tree_result = self._terminate_process_tree(process_pid, False, timeout//3)
@@ -739,6 +742,7 @@ class InteractiveSubprocess:
                         self.process.kill()  # Send SIGKILL
                         exit_code = self.process.wait(timeout=timeout//3)
                         action = "force killed after timeout"
+                        terminated_pids.append(process_pid) if process_pid not in terminated_pids else None
                     except subprocess.TimeoutExpired:
                         # Last resort: system-level force kill
                         tree_result = self._terminate_process_tree(process_pid, True, timeout//3)

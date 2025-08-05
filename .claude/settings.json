@@ -1,5 +1,5 @@
 {"env": {
-    "ANTHROPIC_BASE_URL": "http://192.168.58.101:8123"
+    "ANTHROPIC_BASE_URL": "http://192.168.58.107:8123"
   },
 
   "allowedTools": [
