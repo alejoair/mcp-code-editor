@@ -11,7 +11,7 @@ This package provides comprehensive code editing functionality including:
 - Code definition search and navigation
 """
 
-__version__ = "0.1.20"
+__version__ = "0.1.21"
 # Automatic bump test completed: 0.1.14 -> 0.1.15
 __author__ = "MCP Code Editor Team"
 __email__ = "mcpcodeeditor@example.com"
