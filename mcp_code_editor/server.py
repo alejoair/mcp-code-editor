@@ -11,6 +11,9 @@ This modular server is designed to be easily extensible.
 """
 
 import logging
+import atexit
+import signal
+import sys
 from typing import List, Dict, Any
 from fastmcp import FastMCP
 from pathlib import Path
@@ -27,6 +30,48 @@ from mcp_code_editor.tools import (apply_diff, create_file, read_file_with_lines
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+
+def shutdown_server():
+    """Clean shutdown of MCP server - terminate all active console processes."""
+    logger.info("Shutting down MCP Code Editor Server...")
+    
+    try:
+        # Get all active processes
+        processes_info = list_console_processes(include_terminated=False, summary_only=False)
+        active_processes = processes_info.get('processes', [])
+        
+        if active_processes:
+            logger.info(f"Terminating {len(active_processes)} active console processes...")
+            
+            # Terminate all active processes
+            for process_info in active_processes:
+                process_id = process_info.get('id')
+                if process_id:
+                    try:
+                        result = terminate_console_process(process_id, force=True, timeout=5)
+                        if result.get('success'):
+                            logger.info(f"Terminated process {process_id}")
+                        else:
+                            logger.warning(f"Failed to terminate process {process_id}: {result.get('message')}")
+                    except Exception as e:
+                        logger.error(f"Error terminating process {process_id}: {e}")
+            
+            # Clean up terminated processes from registry
+            cleanup_result = cleanup_terminated_processes()
+            logger.info(f"Cleanup completed: {cleanup_result.get('message', 'Unknown result')}")
+        else:
+            logger.info("No active console processes to terminate")
+            
+    except Exception as e:
+        logger.error(f"Error during shutdown cleanup: {e}")
+    
+    logger.info("MCP Code Editor Server shutdown completed")
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals."""
+    logger.info(f"Received signal {signum}, initiating shutdown...")
+    shutdown_server()
+    sys.exit(0)
 
 # Import Context for state management
 from fastmcp import Context
@@ -1650,11 +1695,28 @@ def main():
     """Main entry point for the MCP Code Editor Server."""
     logger.info("Starting MCP Code Editor Server...")
     
-    # Run the server with STDIO transport (default)
-    mcp.run()
+    # Register shutdown handlers
+    atexit.register(shutdown_server)
     
-    # For HTTP transport, uncomment:
-    # mcp.run(transport="streamable-http", host="127.0.0.1", port=9000)
+    # Register signal handlers for graceful shutdown
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, signal_handler)
+    if hasattr(signal, 'SIGINT'):
+        signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        # Run the server with STDIO transport (default)
+        mcp.run()
+        
+        # For HTTP transport, uncomment:
+        # mcp.run(transport="streamable-http", host="127.0.0.1", port=9000)
+    except KeyboardInterrupt:
+        logger.info("Received KeyboardInterrupt, shutting down...")
+        shutdown_server()
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        shutdown_server()
+        raise
 
 if __name__ == "__main__":
     main()

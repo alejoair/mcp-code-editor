@@ -28,46 +28,46 @@ def apply_diff(file_path: str, diff_blocks: List[Dict[str, Any]], force: bool = 
     """
     try:
         # Validate inputs
-        if not path:
+        if not file_path:
             raise ValueError("File path is required")
-        if not blocks:
+        if not diff_blocks:
             raise ValueError("At least one diff block is required")
         
         # Convert dict blocks to DiffBlock objects
-        diff_blocks = []
-        for i, block_dict in enumerate(blocks):
+        validated_blocks = []
+        for i, block_dict in enumerate(diff_blocks):
             try:
                 diff_block = DiffBlock.validate_block_dict(block_dict)
-                diff_blocks.append(diff_block)
+                validated_blocks.append(diff_block)
             except ValueError as e:
                 raise ValueError(f"Invalid block {i+1}: {str(e)}")
             except Exception as e:
                 raise ValueError(f"Unexpected error in block {i+1}: {str(e)}")
     
         
-        logger.info(f"Processing {len(diff_blocks)} diff blocks for {path}")
+        logger.info(f"Processing {len(validated_blocks)} diff blocks for {file_path}")
         
         # Apply modifications
-        modifier = FileModifier(path)
+        modifier = FileModifier(file_path)
         modifier.load_file()
         
         # Store original stats
         original_lines = len(modifier.lines)
         
         # Apply all diffs
-        new_content = modifier.apply_all_diffs(diff_blocks)
+        new_content = modifier.apply_all_diffs(validated_blocks)
         new_lines = len(new_content.splitlines())
         
         # Save the file
         modifier.save_file(new_content)
         
         # Build the diff string for logging/debugging purposes
-        diff_string = DiffBuilder.build_diff_string(diff_blocks)
+        diff_string = DiffBuilder.build_diff_string(validated_blocks)
         logger.debug(f"Applied diff:\n{diff_string}")
         
         # Calcular líneas realmente modificadas (no solo la diferencia neta)
         lines_modified = 0
-        for block in diff_blocks:
+        for block in validated_blocks:
             # Los diff_blocks son objetos DiffBlock (Pydantic models)
             start_line = block.start_line
             end_line = block.end_line if block.end_line else start_line
@@ -75,9 +75,9 @@ def apply_diff(file_path: str, diff_blocks: List[Dict[str, Any]], force: bool = 
         
         return {
             "success": True,
-            "message": f"Successfully applied {len(diff_blocks)} diff blocks to {path}",
+            "message": f"Successfully applied {len(validated_blocks)} diff blocks to {file_path}",
             "file_path": str(modifier.file_path),
-            "blocks_applied": len(diff_blocks),
+            "blocks_applied": len(validated_blocks),
             "original_lines": original_lines,
             "new_lines": new_lines,
             "lines_changed": lines_modified,
