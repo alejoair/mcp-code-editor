@@ -75,6 +75,30 @@ mcp = FastMCP(
 # Initialize project state
 mcp.project_state = ProjectState()
 
+# Utility function to clean responses
+def _clean_response(data):
+    """Remove empty arrays, dicts, and None values from response."""
+    if isinstance(data, dict):
+        cleaned = {}
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                cleaned_value = _clean_response(value)
+                # Only include non-empty containers
+                if cleaned_value:
+                    cleaned[key] = cleaned_value
+            elif value is not None and value != "":
+                cleaned[key] = value
+        return cleaned
+    elif isinstance(data, list):
+        cleaned = []
+        for item in data:
+            cleaned_item = _clean_response(item)
+            if cleaned_item or isinstance(item, (str, int, float, bool)):
+                cleaned.append(cleaned_item if isinstance(item, (dict, list)) else item)
+        return cleaned
+    else:
+        return data
+
 # Helper functions for library integration
 def _enhance_dependency_analysis_with_libraries(analysis, indexed_libraries, file_path):
     """
@@ -678,7 +702,7 @@ def delete_file_tool(path: str, create_backup: bool = False) -> dict:
             except Exception as e:
                 logger.warning(f"Failed to update AST index after deleting {path}: {e}")
     
-    return result
+    return _clean_response(result)
 
 @mcp.tool
 async def setup_code_editor_tool(path: str, analyze_ast: bool = True, ctx: Context = None) -> dict:
@@ -1142,9 +1166,9 @@ async def get_code_definition(
         elif len(definitions) > 1:
             result["suggested_next_action"] = f"Found {len(definitions)} definitions for '{identifier}'.{usage_summary} Review each location before making changes to ensure you modify the correct one."
         
-        # All processing complete
+        # All processing complete - clean empty fields
         
-        return result
+        return _clean_response(result)
         
     except Exception as e:
         await ctx.error(f"Error searching for definition '{identifier}': {str(e)}")

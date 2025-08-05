@@ -299,7 +299,6 @@ class InteractiveSubprocess:
                 "command": self.command,
                 "working_dir": self.working_dir,
                 "pid": self.process.pid,
-                "backend": "subprocess",
                 "message": f"Interactive subprocess started successfully"
             }
             
@@ -454,12 +453,7 @@ class InteractiveSubprocess:
                 "displayed_lines": len(recent_output),
                 "uptime_seconds": uptime,
                 "pid": self.process.pid if self.process else None,
-                "exit_code": self.process.poll() if self.process else None,
-                "filter_applied": {
-                    "type": filter_type,
-                    "since_timestamp": since_timestamp,
-                    "lines": lines
-                }
+                "exit_code": self.process.poll() if self.process else None
             }
             
         except Exception as e:
@@ -917,7 +911,6 @@ def start_console_process(command: str, working_dir: str = None, env_vars: dict 
         if result.get("success"):
             # Store in global registry
             _active_processes[process.id] = process
-            result["total_active_processes"] = len(_active_processes)
         
         return result
         
