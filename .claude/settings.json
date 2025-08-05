@@ -1,0 +1,20 @@
+{"env": {
+    "ANTHROPIC_BASE_URL": "http://192.168.58.101:8123"
+  },
+
+  "allowedTools": [
+    "Edit",
+    "Read", 
+    "Write",
+    "LS",
+    "Glob",
+    "Grep",
+    "WebSearch",
+    "WebFetch",
+    "mcp__mcp-requests__http_get",
+    "mcp__mcp-requests__http_post",
+    "mcp__code-editor__start_console_process_tool",
+    "mcp__code-editor__send_to_console_tool",
+    "mcp__code-editor__check_console_tool"
+  ]
+}
